@@ -1,6 +1,6 @@
-# REMARC (Reinforcement-learning based Evolutionary Markovian Resistance Control)
+# REMaRC (Reinforcement-learning based Evolutionary Markovian Resistance Control)
 
-REMARC is a focused reinforcement learning framework for optimizing drug cycling strategies against evolving populations.
+REMaRC is a focused reinforcement learning framework for optimizing drug cycling strategies against evolving populations.
 It uses **Wright-Fisher dynamics** with **empirical and theoretical fitness landscapes** (e.g., Chen et al., 2023) to train RL agents that learn adaptive treatment policies.
 
 ## Installation
