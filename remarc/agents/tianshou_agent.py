@@ -102,12 +102,30 @@ class MetricsLogger:
 class LossCapturingLogger(BaseLogger):
     """Wraps a TensorboardLogger to intercept the most recent training loss."""
 
-    def __init__(self, base_logger, last_loss_ref: list):
+    def __init__(self, base_logger: TensorboardLogger, last_loss_ref: list):
         self.base_logger = base_logger
         self.last_loss = last_loss_ref
 
     def __getattr__(self, name):
         return getattr(self.base_logger, name)
+
+    def write(self, step_type: str, step: int, data: dict) -> None:
+        self.base_logger.write(step_type, step, data)
+
+    def prepare_dict_for_logging(self, log_data: dict) -> dict:
+        return self.base_logger.prepare_dict_for_logging(log_data)
+
+    def finalize(self) -> None:
+        self.base_logger.finalize()
+
+    def save_data(self, epoch: int, env_step: int, gradient_step: int, save_checkpoint_fn=None) -> None:
+        self.base_logger.save_data(epoch, env_step, gradient_step, save_checkpoint_fn)
+
+    def restore_data(self) -> tuple:
+        return self.base_logger.restore_data()
+
+    def restore_logged_data(self, log_path: str) -> dict:
+        return self.base_logger.restore_logged_data(log_path)
 
     def log_update_data(self, log_data, step):
         loss = None
@@ -319,6 +337,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         step_per_collect=p.train_steps_per_epoch,
         train_fn=train_fn,
         test_fn=test_fn,
+        # pyrefly: ignore [bad-argument-type]
         stop_fn=lambda mean_rewards: None,
         save_best_fn=save_best_v2,
         logger=wrapped_logger,
