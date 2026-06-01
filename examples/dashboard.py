@@ -87,7 +87,7 @@ def start_simulation(tab_id):
     
     # Use the same python executable as current process
     py_path = sys.executable
-    script_path = str(project_root / "examples" / "run.py")
+    script_path = str(project_root / "examples" / "train.py")
     
     cmd = [
         py_path, script_path, 

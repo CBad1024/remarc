@@ -35,3 +35,11 @@ test = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["evodm*"]
+
+[tool.pyright]
+autoSearchPaths = false
+extraPaths = ["."]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+

@@ -1,5 +1,5 @@
 """
-frequency_evolution_chen_gif.py
+frequency_evolution_animation.py
 
 Interactive animation of tumor/bacterial population evolution overlaid on the
 3D fitness landscape surface (Drugs × Genotypes × Fitness) for the Chen et al. dataset.
@@ -29,7 +29,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from evodm.envs import WrightFisherEnv
-from evodm.envs.helpers import define_chen_landscapes
+from evodm.envs.utils import define_chen_landscapes
 from evodm.core.landscapes import Landscape
 from evodm.core.hyperparameters import Presets
 from tianshou.data import Batch

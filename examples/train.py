@@ -22,7 +22,7 @@ from tianshou.policy import BasePolicy
 import json
 import pickle
 
-from evodm.envs.helpers import define_chen_landscapes
+from evodm.envs.utils import define_chen_landscapes
 from evodm.envs import WrightFisherEnv, define_chen_landscapes, define_four_state_landscapes
 from evodm.core.hyperparameters import Presets
 from evodm.core.landscapes import Landscape

@@ -16,11 +16,11 @@ uv sync
 ## Running the framework
 
 ```bash
-uv run examples/run.py --wf-train
+uv run examples/train.py --wf-train
 ```
 
 ## Interactive Streamlit Interface
 
 ```bash
-uv run streamlit run examples/streamlit_app.py
+uv run streamlit run examples/dashboard.py
 ```

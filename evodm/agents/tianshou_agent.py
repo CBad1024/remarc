@@ -241,7 +241,7 @@ def train_wf_landscapes(p: P, signature: str = None):
         num_drugs = 10
         landscape_list = [Landscape(v_N, sigma=0.5) for _ in range(num_drugs)]
 
-    # Save shared landscapes so run.py evaluation uses the same data
+    # Save shared landscapes so train.py evaluation uses the same data
     print("Saving landscapes to active_landscapes.pkl")
     with open(os.path.join(log_path, "active_landscapes.pkl"), "wb") as f:
         pickle.dump(landscape_list, f)

@@ -2,7 +2,7 @@ import gymnasium
 import numpy as np
 import pandas as pd
 import tianshou as ts
-from examples.run import log_trajectory_step
+from examples.train import log_trajectory_step
 
 
 def run_one_drug_sim(env : gymnasium.Env, drug_A : int = 0, num_episodes : int = 10, episode_length : int = 20, signature : str = None):

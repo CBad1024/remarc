@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from evodm.envs import WrightFisherEnv
-from evodm.envs.helpers import define_chen_landscapes
+from evodm.envs.utils import define_chen_landscapes
 from evodm.core.landscapes import Landscape
 
 def plot_frequency_heatmaps(frequencies_at_times, time_steps, filename="wf_frequency_heatmap.png"):
