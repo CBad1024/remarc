@@ -7,9 +7,6 @@ from ..core.landscapes import Landscape
 
 class WrightFisherEnv(gym.Env):
 
-    landscape_list = None
-    drug_landscapes = None
-
     def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, gen_per_step=500, total_generations=1000, num_drugs = 10, random_start=False, landscape_list=None, reward_scale=1.0):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size

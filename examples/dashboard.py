@@ -144,7 +144,7 @@ def start_simulation(tab_id):
         text=False
     )
     
-    if sys.platform != "win32":
+    if sys.platform != "win32" and process.stdout is not None:
         fd = process.stdout.fileno()
         fl = fcntl.fcntl(fd, fcntl.F_GETFL)
         fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
@@ -159,7 +159,7 @@ def update_logs_for_sim(tab_id):
     changed = False
     max_log_len = 20000 # Keep only last 20k chars to prevent WebSocket saturation
     
-    if sim["process"]:
+    if sim["process"] and sim["process"].stdout is not None:
         fd = sim["process"].stdout.fileno()
         try:
             while True:
@@ -502,7 +502,7 @@ def plot_baseline_comparison(tab_id):
         # Plot std bands
         ax.fill_between(timesteps, baseline_mean - baseline_std, baseline_mean + baseline_std, alpha=0.3, color='orange')
         ax.fill_between(timesteps, learned_mean - learned_std, learned_mean + learned_std, alpha=0.3, color='blue')
-        if random_data:
+        if random_data and random_mean is not None and random_std is not None:
             ax.fill_between(timesteps, random_mean - random_std, random_mean + random_std, alpha=0.1, color='red')
         
         ax.set_xlabel('Timestep')

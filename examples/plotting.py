@@ -15,6 +15,7 @@ def plot_frequency_heatmaps(frequencies_at_times, time_steps, filename="wf_frequ
     # Find global max for consistent color scaling
     vmax = max([np.max(f) for f in frequencies_at_times]) if frequencies_at_times else 1.0
     
+    im = None
     for idx, (freqs, t) in enumerate(zip(frequencies_at_times, time_steps)):
         ax = axes[idx]
         # Reshape 8 genotypes into 2x4 grid

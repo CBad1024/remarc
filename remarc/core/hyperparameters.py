@@ -3,7 +3,7 @@ from typing import Sequence
 
 @dataclass(frozen=True)
 class Presets:
-    state_shape : int
+    state_shape : tuple[int, ...]
     num_actions : int | Sequence[int] | None
     lr : float
     epochs : int

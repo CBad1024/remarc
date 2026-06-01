@@ -128,7 +128,7 @@ class LossCapturingLogger:
         if isinstance(loss, dict) and "mean" in loss:
             loss = loss["mean"]
 
-        if loss is not None:
+        if loss is not None and not isinstance(loss, dict):
             try:
                 self.last_loss[0] = float(loss)
             except (TypeError, ValueError):
@@ -201,7 +201,7 @@ def load_random_policy(p: P):
 # Training — Wright-Fisher Landscapes
 # ---------------------------------------------------------------------------
 
-def train_wf_landscapes(p: P, signature: str = None):
+def train_wf_landscapes(p: P, signature: str | None = None):
     v_N = int(np.log2(p.state_shape[0]))
 
     from ..core.landscapes import Landscape

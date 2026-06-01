@@ -5,7 +5,7 @@ import tianshou as ts
 from examples.train import log_trajectory_step
 
 
-def run_one_drug_sim(env : gymnasium.Env, drug_A : int = 0, num_episodes : int = 10, episode_length : int = 20, signature : str = None):
+def run_one_drug_sim(env : gymnasium.Env, drug_A : int = 0, num_episodes : int = 10, episode_length : int = 20, signature : str | None = None):
     """
     Simulates the environment for a number of episodes using a given policy.
 

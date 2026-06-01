@@ -169,7 +169,7 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
     return results_df
 
 
-def run_wright_fisher(train: bool, signature: str = None, filename: str = None, hp_args=None):
+def run_wright_fisher(train: bool, signature: str | None = None, filename: str | None = None, hp_args=None):
     p_base = Presets.p1_ls()
     
     # Determine correct action space size and state shape based on dataset
@@ -324,6 +324,7 @@ def run_wright_fisher(train: bool, signature: str = None, filename: str = None, 
                 sigma=v_sigma # Use the same sigma as training (0.0 for empirical)
             )
             
+            assert best_drug_id is not None and best_fitness is not None, "No best drug found"
             print(f"Best single drug: #{best_drug_id} with mean fitness: {best_fitness:.4f}")
             
             # Extract trajectories for best drug
@@ -438,17 +439,17 @@ def run_wright_fisher(train: bool, signature: str = None, filename: str = None, 
     print(states.shape)
 
 
-def main(wf_test=False, wf_train=False, signature=None, filename=None, hp_args=None):
+def main(wf_test=False, wf_train=False, signature: str | None = None, filename: str | None = None, hp_args=None):
     if wf_test:
         run_wright_fisher(train=wf_train, signature=signature, filename=filename, hp_args=hp_args)
 
 
-def main_wf_landscapes(train, signature=None, filename=None, hp_args=None):
+def main_wf_landscapes(train, signature: str | None = None, filename: str | None = None, hp_args=None):
     main(wf_test=True, wf_train=train, signature=signature, filename=filename, hp_args=hp_args)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="EvoDM Runner")
+    parser = argparse.ArgumentParser(description="REMARC Runner")
     parser.add_argument("--mode", type=str, choices=["wf_ls"], default="wf_ls")
     parser.add_argument("--train", action="store_true", help="Train before evaluation")
     parser.add_argument("--no-train", action="store_false", dest="train", help="Skip training (only evaluation)")
