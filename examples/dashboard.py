@@ -383,6 +383,65 @@ def plot_live_policy(tab_id):
         st.error(f"Error loading policy snapshot: {e}")
 
 
+def plot_simplex_section(tab_id):
+    """
+    Show simplex policy slices for four-state runs.
+    Displays the greedy baseline, and the trained RL policy if available.
+    """
+    sim = st.session_state.sims[tab_id]
+    dataset = sim["hp"].get("dataset", "")
+
+    # Only show for four-state datasets
+    if DATASET_OPTIONS.get(dataset, {}).get("cli") != "four_state":
+        return
+
+    from examples.plotting import plot_simplex_policy_slices, greedy_policy
+    from remarc.envs.utils import define_four_state_landscapes
+
+    st.subheader("Simplex Policy Visualization")
+    st.caption("3D simplex (x₀+x₁+x₂+x₃=1) sliced along x₃. Color shows which drug the policy selects at each population composition.")
+
+    landscapes = define_four_state_landscapes()
+
+    # --- Greedy baseline ---
+    def greedy_fn(state):
+        return greedy_policy(state, landscapes)
+
+    fig_greedy = plot_simplex_policy_slices(
+        policy_fn=greedy_fn,
+        num_drugs=len(landscapes),
+        drug_labels=["Drug A", "Drug B", "Drug C", "Drug D"],
+        genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+        resolution=50,
+        title="Greedy Policy (minimize immediate fitness)",
+    )
+    st.pyplot(fig_greedy)
+    plt.close(fig_greedy)
+
+    # --- Trained policy (if available) ---
+    signature = sim.get("signature")
+    if signature:
+        policy_path = project_root / "log" / "policies" / f"best_policy_{signature}.pth"
+        if policy_path.exists():
+            try:
+                from examples.plotting import _load_ppo_policy_fn
+                trained_fn = _load_ppo_policy_fn(str(policy_path), state_dim=4, n_actions=len(landscapes))
+                fig_trained = plot_simplex_policy_slices(
+                    policy_fn=trained_fn,
+                    num_drugs=len(landscapes),
+                    drug_labels=["Drug A", "Drug B", "Drug C", "Drug D"],
+                    genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+                    resolution=50,
+                    title="Trained RL Policy",
+                )
+                st.pyplot(fig_trained)
+                plt.close(fig_trained)
+            except Exception as e:
+                st.warning(f"Could not load trained policy for simplex plot: {e}")
+        else:
+            st.info("Trained policy not yet available. Will show after training completes.")
+
+
 def plot_baseline_comparison(tab_id):
     """
     Plot fitness trajectories: Learned vs ALL Single-Drug baselines
@@ -635,9 +694,13 @@ def render_status_logic(tab_id):
             st.divider()
             plot_baseline_comparison(tab_id)
             st.divider()
+            plot_simplex_section(tab_id)
+            st.divider()
         
         if not sim["train"]:
             plot_baseline_comparison(tab_id)
+            st.divider()
+            plot_simplex_section(tab_id)
         st.divider()
     status_fragment()
 
@@ -665,10 +728,11 @@ def render_tab_content(tab_id):
                 key=f"mode_sel_{tab_id}"
             )
         with cols_top[1]:
-            sim["hp"]["lr"] = st.selectbox(
+            sim["hp"]["lr"] = st.number_input(
                 "Learning rate", 
-                [0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001, 0.0000001], 
-                index=3,
+                min_value=1e-8, max_value=1.0, 
+                value=sim["hp"].get("lr", 0.0001),
+                format="%.1e",
                 key=f"lr_{tab_id}"
             )
         with cols_top[2]:
