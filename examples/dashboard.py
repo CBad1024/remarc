@@ -76,7 +76,8 @@ if "sims" not in st.session_state:
                 "reward_clip": False,
                 "ent_coef": 0.05,
                 "episode_steps": 20,
-                "reward_scale": 100.0
+                "reward_scale": 100.0,
+                "random_start": True
             }
         }
 
@@ -115,6 +116,10 @@ def start_simulation(tab_id):
             "--mutation-rate", str(sim["hp"]["mutation_rate"]),
             "--gen-per-step", str(sim["hp"]["gen_per_step"])
         ]
+        if sim["hp"].get("random_start", True):
+            cmd += ["--random-start"]
+        else:
+            cmd += ["--no-random-start"]
 
     if sim["train"] and sim.get("signature"):
         cmd += ["--signature", sim["signature"]]
@@ -764,6 +769,7 @@ def render_tab_content(tab_id):
             sim["hp"]["ent_coef"] = st.number_input("Entropy Coef.", 0.0, 1.0, sim["hp"].get("ent_coef", 0.05), step=0.01, key=f"ent_{tab_id}", help="Higher = more exploration")
             sim["hp"]["episode_steps"] = st.number_input("Episode Steps", 1, 1000, sim["hp"].get("episode_steps", 20), key=f"ep_steps_{tab_id}", help="Number of steps per episode")
             sim["hp"]["reward_scale"] = st.number_input("Reward Scale", 0.1, 10000.0, sim["hp"].get("reward_scale", 100.0), step=10.0, key=f"reward_scale_{tab_id}", help="Scale for rewards (recommended 100 for WF)")
+            sim["hp"]["random_start"] = st.checkbox("Random Start", value=sim["hp"].get("random_start", True), key=f"rstart_{tab_id}", help="Start each episode from a random genotype instead of all-zeros")
         else:
             st.info("No specific parameters for this regime.")
         

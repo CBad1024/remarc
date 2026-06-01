@@ -18,6 +18,7 @@ class Presets:
     ent_coef: float = 0.05
     episode_steps: int = 20
     reward_scale: float = 100.0
+    random_start: bool = True
 
     @staticmethod
     def p1_ss():
@@ -35,7 +36,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -54,7 +56,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -73,7 +76,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -92,7 +96,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -111,7 +116,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=1.0
+            reward_scale=1.0,
+            random_start=True
         )
 
     @staticmethod
@@ -130,5 +136,6 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )

@@ -50,7 +50,7 @@ builtins.print = print
 
 
 
-def evaluate_best_single_drug(landscape : np.ndarray = define_chen_landscapes(), num_episodes : int = 20, seq_length : int = 3, episode_length : int = 20, gen_per_step: int = 500, sigma: float = 0.0):
+def evaluate_best_single_drug(landscape : np.ndarray = define_chen_landscapes(), num_episodes : int = 20, seq_length : int = 3, episode_length : int = 20, gen_per_step: int = 500, sigma: float = 0.0, random_start: bool = True):
     """
     Evaluate the best single drug policy through simulating each individually.
 
@@ -60,7 +60,7 @@ def evaluate_best_single_drug(landscape : np.ndarray = define_chen_landscapes(),
         trajectories: list of pd.DataFrame - trajectories of each drug
     """
     landscape_list = [Landscape(N=seq_length, sigma=sigma, ls=landscape[i, :]) for i in range(len(landscape))]
-    env = WrightFisherEnv(seq_length=seq_length, landscape_list=landscape_list, num_drugs=len(landscape_list), gen_per_step=gen_per_step)
+    env = WrightFisherEnv(seq_length=seq_length, landscape_list=landscape_list, num_drugs=len(landscape_list), gen_per_step=gen_per_step, random_start=random_start)
     
     trajectories = []
     best_drug = None
@@ -207,7 +207,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             dataset=hp_args.dataset if hp_args else "chen",
             gen_per_step=hp_args.gen_per_step if hp_args else 500,
             ent_coef=hp_args.ent_coef,
-            episode_steps=hp_args.episode_steps
+            episode_steps=hp_args.episode_steps,
+            reward_scale=hp_args.reward_scale if hp_args else 100.0,
+            random_start=getattr(hp_args, 'random_start', True)
         )
     else:
         # Even if no hp_args, we should ensure num_actions and state_shape are correct for the dataset
@@ -225,7 +227,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             dataset=p_base.dataset,
             gen_per_step=p_base.gen_per_step,
             ent_coef=p_base.ent_coef,
-            episode_steps=p_base.episode_steps
+            episode_steps=p_base.episode_steps,
+            reward_scale=p_base.reward_scale,
+            random_start=p_base.random_start
         )
 
     if train:
@@ -270,7 +274,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             active_landscapes = [Landscape(v_N, sigma=v_sigma) for _ in range(v_num_drugs)]
 
     # WF uses PPO, so we must load as PPO
-    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0)
+    v_random_start = getattr(hp_args, 'random_start', True) if hp_args else True
+    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start)
     best_policy = load_best_policy(p, filename=filename, env_type="wf", ppo=True)
     # Update env with WF specific parameters
     if hp_args:
@@ -316,7 +321,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                 seq_length=v_N,
                 episode_length=episode_length,
                 gen_per_step=hp_args.gen_per_step if hp_args else 500,
-                sigma=v_sigma # Use the same sigma as training (0.0 for empirical)
+                sigma=v_sigma, # Use the same sigma as training (0.0 for empirical)
+                random_start=v_random_start
             )
             
             assert best_drug_id is not None and best_fitness is not None, "No best drug found"
@@ -481,6 +487,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="chen", choices=["chen", "four_state", "synthetic"], help="Dataset to use (chen, four_state, or synthetic)")
     parser.add_argument("--ent-coef", type=float, default=0.05, help="Entropy coefficient for PPO (default: 0.05)")
     parser.add_argument("--episode-steps", type=int, default=20, help="Number of steps per episode (default: 20)")
+    parser.add_argument("--random-start", action="store_true", default=True, help="Start episodes from random genotypes (default: True)")
+    parser.add_argument("--no-random-start", action="store_false", dest="random_start", help="Start all episodes from genotype 000")
 
     parser.set_defaults(train=True)
 

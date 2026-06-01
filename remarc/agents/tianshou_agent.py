@@ -301,7 +301,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         landscape_list=landscape_list,
         gen_per_step=getattr(p, "gen_per_step", 500),
         seq_length=v_N,
-        random_start=True,
+        random_start=getattr(p, "random_start", True),
         episode_steps=getattr(p, "episode_steps", 20),
         reward_scale=getattr(p, "reward_scale", 100.0),
     )
