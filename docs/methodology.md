@@ -1,6 +1,6 @@
 # Evolutionary Methodology
 
-`evodm` supports two primary evolutionary dynamics to model how populations (like cancer cells or bacteria) respond to treatment.
+`remarc` supports two primary evolutionary dynamics to model how populations (like cancer cells or bacteria) respond to treatment.
 
 ## Strong Selection Weak Mutation (SSWM)
 

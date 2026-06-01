@@ -9,13 +9,13 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import json
-from evodm.envs import define_chen_landscapes, define_chen_landscapes, define_four_state_landscapes
+from remarc.envs import define_chen_landscapes, define_chen_landscapes, define_four_state_landscapes
 
 # Add project root to sys.path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-st.set_page_config(page_title="EvoDM Playground", layout="wide")
+st.set_page_config(page_title="REMARC Playground", layout="wide")
 
 # Custom CSS for Playground feel
 st.markdown("""
@@ -625,7 +625,7 @@ def render_status_logic(tab_id):
     status_fragment()
 
 # Header
-st.title("🔬 EvoDM Playground")
+st.title("🔬 REMARC Playground")
 st.markdown("Tinker with Evolutionary Dynamics and Reinforcement Learning right in your browser.")
 
 # UI Layout
@@ -768,4 +768,4 @@ for i, tab in enumerate(tabs):
         render_tab_content(i)
 
 st.divider()
-st.caption("EvoDM - Evolutionary Dynamics Modeling with RL | support for concurrent executions")
+st.caption("REMARC - Reinforcement-learning based Evolutionary Markovian Resistance Control | support for concurrent executions")

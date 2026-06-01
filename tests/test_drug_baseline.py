@@ -1,5 +1,5 @@
 import pytest 
-from evodm.envs import define_chen_landscapes
+from remarc.envs import define_chen_landscapes
 from examples.train import evaluate_best_single_drug
 
 def test_evaluate_best_single_drug():

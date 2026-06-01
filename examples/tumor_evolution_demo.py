@@ -9,10 +9,10 @@ import os
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from evodm.envs import WrightFisherEnv
-from evodm.envs.utils import define_chen_landscapes
-from evodm.core.landscapes import Landscape
-from evodm.core.hyperparameters import Presets
+from remarc.envs import WrightFisherEnv
+from remarc.envs.utils import define_chen_landscapes
+from remarc.core.landscapes import Landscape
+from remarc.core.hyperparameters import Presets
 
 # ---------------------------------------------------------------------------
 # Constants & Colors

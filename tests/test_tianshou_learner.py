@@ -1,6 +1,6 @@
 import pytest
-from evodm import WrightFisherEnv, Presets
-from evodm.agents import train_wf_landscapes, load_testing_envs
+from remarc import WrightFisherEnv, Presets
+from remarc.agents import train_wf_landscapes, load_testing_envs
 
 def test_load_file():
     p = Presets.p1_test()

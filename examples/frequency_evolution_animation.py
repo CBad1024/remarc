@@ -28,10 +28,10 @@ import json
 import numpy as np
 import plotly.graph_objects as go
 
-from evodm.envs import WrightFisherEnv
-from evodm.envs.utils import define_chen_landscapes
-from evodm.core.landscapes import Landscape
-from evodm.core.hyperparameters import Presets
+from remarc.envs import WrightFisherEnv
+from remarc.envs.utils import define_chen_landscapes
+from remarc.core.landscapes import Landscape
+from remarc.core.hyperparameters import Presets
 from tianshou.data import Batch
 
 # ---------------------------------------------------------------------------
@@ -392,7 +392,7 @@ def create_frequency_gif(
     opt_loaded = False
 
     if os.path.exists(policy_path):
-        from evodm.agents.tianshou_agent import get_ppo_policy
+        from remarc.agents.tianshou_agent import get_ppo_policy
         _train_envs, _ = WrightFisherEnv.getEnv(2, 2, False,
                                                   landscape_list=landscape_list,
                                                   num_drugs=NUM_DRUGS)

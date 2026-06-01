@@ -1,13 +1,13 @@
-# Refactoring Proposals for evodm
+# Refactoring Proposals for remarc
 
 Based on a review of the current source code, several architectural and organizational improvements are recommended to enhance maintainability, scalability, and clarity.
 
 ## 1. Project Structure Reorganization
 
-The current structure groups most logic into a single flat `evodm/` directory. A more modular approach is recommended:
+The current structure groups most logic into a single flat `remarc/` directory. A more modular approach is recommended:
 
 ```text
-evodm/
+remarc/
 ├── core/
 │   ├── landscapes.py       # Landscape and Seascape classes
 │   ├── dynamics.py         # SSWM and Wright-Fisher theoretical logic
@@ -30,7 +30,7 @@ evodm/
 ## 2. Modularization of `evol_game.py`
 
 `evol_game.py` is currently a "God object" file exceeding 1,200 lines, containing multiple environment classes, landscape generation helpers, and simulation runners.
-- **Proposal**: Split this file into `evodm/envs/` as described above. Each environment should reside in its own file.
+- **Proposal**: Split this file into `remarc/envs/` as described above. Each environment should reside in its own file.
 - **Benefit**: Easier debugging and prevents circular imports.
 
 ## 3. Naming Conventions and Type Hinting

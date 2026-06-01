@@ -22,11 +22,11 @@ from tianshou.policy import BasePolicy
 import json
 import pickle
 
-from evodm.envs.utils import define_chen_landscapes
-from evodm.envs import WrightFisherEnv, define_chen_landscapes, define_four_state_landscapes
-from evodm.core.hyperparameters import Presets
-from evodm.core.landscapes import Landscape
-from evodm.agents.tianshou_agent import load_best_policy, load_random_policy, train_wf_landscapes
+from remarc.envs.utils import define_chen_landscapes
+from remarc.envs import WrightFisherEnv, define_chen_landscapes, define_four_state_landscapes
+from remarc.core.hyperparameters import Presets
+from remarc.core.landscapes import Landscape
+from remarc.agents.tianshou_agent import load_best_policy, load_random_policy, train_wf_landscapes
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -65,7 +65,7 @@ def evaluate_best_single_drug(landscape : np.ndarray = define_chen_landscapes(),
     trajectories = []
     best_drug = None
     best_fitness = None
-    from evodm.core.simulations import run_one_drug_sim
+    from remarc.core.simulations import run_one_drug_sim
     for i in range(len(landscape_list)):
         env.reset()
         env.action = i

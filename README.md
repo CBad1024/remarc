@@ -1,15 +1,13 @@
-# EvoDM (Wright-Fisher Baseline Edition)
+# REMARC (Reinforcement-learning based Evolutionary Markovian Resistance Control)
 
-This is a stripped-down, focused version of the Evolutionary Decision Making (evodm) reinforcement learning framework.
-It is explicitly narrowed to focus solely on **Wright-Fisher dynamics** using **empirical and theoretical fitness landscapes** (e.g., Chen et al., 2023). 
-
-This repository serves as a clean codebase for publication purposes, excluding legacy SSWM implementations and multi-concentration Seascapes.
+REMARC is a focused reinforcement learning framework for optimizing drug cycling strategies against evolving populations.
+It uses **Wright-Fisher dynamics** with **empirical and theoretical fitness landscapes** (e.g., Chen et al., 2023) to train RL agents that learn adaptive treatment policies.
 
 ## Installation
 
 ```bash
-git clone https://github.com/DavisWeaver/evodm
-cd evodm
+git clone https://github.com/DavisWeaver/remarc
+cd remarc
 uv sync
 ```
 

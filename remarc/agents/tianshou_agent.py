@@ -68,7 +68,7 @@ class VectorRewardClip(VectorEnvWrapper):
 # Paths & logging infrastructure
 # ---------------------------------------------------------------------------
 
-# Resolve PROJECT_ROOT relative to this file's location (evodm/agents/tianshou_agent.py)
+# Resolve PROJECT_ROOT relative to this file's location (remarc/agents/tianshou_agent.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 log_path = os.path.join(PROJECT_ROOT, "log", "RL")
@@ -209,7 +209,7 @@ def train_wf_landscapes(p: P, signature: str = None):
     landscape_list = []
 
     if hasattr(p, "dataset") and p.dataset == "chen":
-        from evodm.envs import define_chen_landscapes
+        from remarc.envs import define_chen_landscapes
         print("Using Chen landscapes for Wright-Fisher training.")
         v_N = 3
         chen_data = define_chen_landscapes()
@@ -223,7 +223,7 @@ def train_wf_landscapes(p: P, signature: str = None):
             landscape_list.append(Landscape(v_N, sigma=0.0, ls=chen_data_norm[i], g_min=g_min, g_max=g_max))
 
     elif hasattr(p, "dataset") and p.dataset == "four_state":
-        from evodm.envs import define_four_state_landscapes
+        from remarc.envs import define_four_state_landscapes
         print("Using Four-State landscapes for Wright-Fisher training.")
         v_N = 2
         four_state_data = define_four_state_landscapes()
