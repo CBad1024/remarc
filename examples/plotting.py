@@ -28,7 +28,7 @@ def plot_frequency_heatmaps(frequencies_at_times, time_steps, filename="wf_frequ
     # Add colorbar at the end
     fig.subplots_adjust(right=0.9)
     if num_panels > 1:
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        cbar_ax = fig.add_axes((0.92, 0.15, 0.02, 0.7))
         fig.colorbar(im, cax=cbar_ax, label='Frequency')
     else:
         plt.colorbar(im, ax=axes[0], label='Frequency')
