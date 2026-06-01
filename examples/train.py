@@ -68,7 +68,6 @@ def evaluate_best_single_drug(landscape : np.ndarray = define_chen_landscapes(),
     from remarc.core.simulations import run_one_drug_sim
     for i in range(len(landscape_list)):
         env.reset()
-        env.action = i
         trajectory = run_one_drug_sim(env=env, drug_A=i, num_episodes=num_episodes, episode_length=episode_length)
         trajectories.append(trajectory)
         if best_fitness is None or trajectory['Fitness'].mean() < best_fitness:  # find lowest fitness
@@ -277,7 +276,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     if hp_args:
         env.pop_size = hp_args.pop_size
         env.mutation_rate = hp_args.mutation_rate
-        env.gen_per_step = hp_args.gen_per_step
+        env.switch_interval = hp_args.gen_per_step
 
     results_df = run_sim_tianshou(env=env, policy=best_policy, num_episodes=num_episodes, episode_length=episode_length, signature=signature)
     print(results_df.loc[:, ["Episode", "Time Step", "Action", "Fitness"]])
@@ -312,7 +311,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             elif hp_args and hp_args.dataset == "four_state":
                 landscapes = define_four_state_landscapes()
             else:
-                landscapes = active_landscapes
+                landscapes = np.array([l.ls for l in active_landscapes])
             
             # Evaluate all single-drug policies
             best_drug_id, best_fitness, all_trajectories = evaluate_best_single_drug(

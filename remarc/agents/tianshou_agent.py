@@ -11,6 +11,7 @@ from tianshou.env import DummyVectorEnv, VectorEnvWrapper
 from tianshou.policy import PPOPolicy, BasePolicy
 from tianshou.trainer import OnpolicyTrainer
 from tianshou.utils import TensorboardLogger
+from tianshou.utils.logger.base import BaseLogger
 from tianshou.utils.net.common import Net
 from tianshou.utils.net.discrete import Actor, Critic
 from torch.optim import Adam
@@ -98,7 +99,7 @@ class MetricsLogger:
                 f.write(f"{epoch},{mean_reward},{std_reward}{loss_str}\n")
 
 
-class LossCapturingLogger:
+class LossCapturingLogger(BaseLogger):
     """Wraps a TensorboardLogger to intercept the most recent training loss."""
 
     def __init__(self, base_logger, last_loss_ref: list):
@@ -108,19 +109,19 @@ class LossCapturingLogger:
     def __getattr__(self, name):
         return getattr(self.base_logger, name)
 
-    def log_update_data(self, data, step):
+    def log_update_data(self, log_data, step):
         loss = None
 
-        if isinstance(data, dict):
-            loss = data.get("loss") or data.get("loss/total") or data.get("loss/clip")
-        elif hasattr(data, "loss"):
-            loss = data.loss
-        elif hasattr(data, "__getitem__"):
+        if isinstance(log_data, dict):
+            loss = log_data.get("loss") or log_data.get("loss/total") or log_data.get("loss/clip")
+        elif hasattr(log_data, "loss"):
+            loss = log_data.loss
+        elif hasattr(log_data, "__getitem__"):
             try:
-                loss = data["loss"]
+                loss = log_data["loss"]
             except (KeyError, TypeError):
                 try:
-                    loss = data["loss/total"]
+                    loss = log_data["loss/total"]
                 except (KeyError, TypeError):
                     pass
 
@@ -134,7 +135,7 @@ class LossCapturingLogger:
             except (TypeError, ValueError):
                 pass
 
-        return self.base_logger.log_update_data(data, step)
+        return self.base_logger.log_update_data(log_data, step)
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     print("Saving testing environments to testing_envs.pkl")
     with open(os.path.join(log_path, "testing_envs.pkl"), "wb") as f:
-        pickle.dump([worker.env for worker in train_envs.workers], f)
+        pickle.dump([getattr(worker, 'env') for worker in train_envs.workers], f)
 
     if getattr(p, "reward_clip", False):
         print("Enable reward clipping (WF)")
@@ -333,7 +334,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 # Policy constructors
 # ---------------------------------------------------------------------------
 
-def get_ppo_policy(p: P, train_envs: DummyVectorEnv) -> PPOPolicy:
+def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPolicy:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     activation = get_activation(p.activation)
 
