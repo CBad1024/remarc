@@ -496,7 +496,7 @@ def plot_baseline_comparison(tab_id):
         # Plot means
         ax.plot(timesteps, baseline_mean, label=f'Best Single Drug (#{baseline_data["best_drug"]})', color='orange', linewidth=2)
         ax.plot(timesteps, learned_mean, label='Learned Policy', color='blue', linewidth=2)
-        if random_data:
+        if random_data and random_mean is not None:
             ax.plot(timesteps, random_mean, label='Random Policy', color='red', linewidth=2, linestyle=':')
         
         # Plot std bands
