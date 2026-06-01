@@ -719,12 +719,13 @@ def render_tab_content(tab_id):
         # Dataset Selection with Filtering Logic
         available_datasets = [name for name, meta in DATASET_OPTIONS.items() if meta["N"] == "any" or meta["N"] == sim["hp"]["n_mut"]]
         
+        dataset_key = str(sim["hp"]["dataset"])
         sim["hp"]["dataset"] = st.selectbox(
             "Select Dataset", 
             available_datasets, 
-            index=0 if sim["hp"]["dataset"] not in available_datasets else available_datasets.index(sim["hp"]["dataset"]),
+            index=0 if dataset_key not in available_datasets else available_datasets.index(dataset_key),
             key=f"dataset_sel_{tab_id}",
-            help=DATASET_OPTIONS[sim["hp"]["dataset"]]["description"] if sim["hp"]["dataset"] in DATASET_OPTIONS else ""
+            help=str(DATASET_OPTIONS[dataset_key]["description"]) if dataset_key in DATASET_OPTIONS else ""
         )
         
 
