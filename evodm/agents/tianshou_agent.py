@@ -1,0 +1,396 @@
+import json
+import os
+import pickle
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.env import DummyVectorEnv, VectorEnvWrapper
+from tianshou.policy import PPOPolicy, BasePolicy
+from tianshou.trainer import OnpolicyTrainer
+from tianshou.utils import TensorboardLogger
+from tianshou.utils.net.common import Net
+from tianshou.utils.net.discrete import Actor, Critic
+from torch.optim import Adam
+from torch.utils.tensorboard import SummaryWriter
+
+from ..core.hyperparameters import Presets as P
+from ..envs import WrightFisherEnv
+
+
+# ---------------------------------------------------------------------------
+# Activation helper
+# ---------------------------------------------------------------------------
+
+def get_activation(activation_name: str | None) -> type[nn.Module]:
+    """Return a torch activation class by name, defaulting to ReLU."""
+    if not activation_name:
+        return nn.ReLU
+
+    mapping = {
+        "relu": nn.ReLU,
+        "leaky_relu": nn.LeakyReLU,
+        "leakyrelu": nn.LeakyReLU,
+        "tanh": nn.Tanh,
+        "sigmoid": nn.Sigmoid,
+        "swish": nn.SiLU,
+        "silu": nn.SiLU,
+        "elu": nn.ELU,
+        "gelu": nn.GELU,
+    }
+    return mapping.get(activation_name.lower(), nn.ReLU)
+
+
+# ---------------------------------------------------------------------------
+# Wrappers
+# ---------------------------------------------------------------------------
+
+class VectorRewardClip(VectorEnvWrapper):
+    """Clips rewards produced by a vectorised environment to [reward_min, reward_max]."""
+
+    def __init__(self, venv, reward_min: float = -5.0, reward_max: float = 5.0):
+        super().__init__(venv)
+        self.reward_min = reward_min
+        self.reward_max = reward_max
+
+    def step(self, action, id=None):
+        if id is None:
+            obs, rew, term, trunc, info = self.venv.step(action)
+        else:
+            obs, rew, term, trunc, info = self.venv.step(action, id)
+        rew = np.clip(rew, self.reward_min, self.reward_max)
+        return obs, rew, term, trunc, info
+
+
+# ---------------------------------------------------------------------------
+# Paths & logging infrastructure
+# ---------------------------------------------------------------------------
+
+# Resolve PROJECT_ROOT relative to this file's location (evodm/agents/tianshou_agent.py)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+log_path = os.path.join(PROJECT_ROOT, "log", "RL")
+metrics_path = os.path.join(PROJECT_ROOT, "log", "metrics")
+os.makedirs(log_path, exist_ok=True)
+os.makedirs(metrics_path, exist_ok=True)
+
+writer = SummaryWriter(log_path)
+logger = TensorboardLogger(writer)
+
+
+class MetricsLogger:
+    """Writes per-epoch reward metrics to CSV files."""
+
+    def __init__(self, signature: str):
+        self.signature = signature
+        self.filename = os.path.join(metrics_path, f"{signature}.csv") if signature else None
+
+        if self.filename:
+            with open(self.filename, "w") as f:
+                f.write("epoch,mean_reward,std_reward,loss\n")
+
+    def log(self, epoch: int, mean_reward: float, std_reward: float, loss=None):
+        if self.filename:
+            with open(self.filename, "a") as f:
+                loss_str = f",{loss}" if loss is not None else ","
+                f.write(f"{epoch},{mean_reward},{std_reward}{loss_str}\n")
+
+
+class LossCapturingLogger:
+    """Wraps a TensorboardLogger to intercept the most recent training loss."""
+
+    def __init__(self, base_logger, last_loss_ref: list):
+        self.base_logger = base_logger
+        self.last_loss = last_loss_ref
+
+    def __getattr__(self, name):
+        return getattr(self.base_logger, name)
+
+    def log_update_data(self, data, step):
+        loss = None
+
+        if isinstance(data, dict):
+            loss = data.get("loss") or data.get("loss/total") or data.get("loss/clip")
+        elif hasattr(data, "loss"):
+            loss = data.loss
+        elif hasattr(data, "__getitem__"):
+            try:
+                loss = data["loss"]
+            except (KeyError, TypeError):
+                try:
+                    loss = data["loss/total"]
+                except (KeyError, TypeError):
+                    pass
+
+        # PPO stats dicts may wrap loss as {"mean": float, ...}
+        if isinstance(loss, dict) and "mean" in loss:
+            loss = loss["mean"]
+
+        if loss is not None:
+            try:
+                self.last_loss[0] = float(loss)
+            except (TypeError, ValueError):
+                pass
+
+        return self.base_logger.log_update_data(data, step)
+
+
+# ---------------------------------------------------------------------------
+# Policy snapshot logging
+# ---------------------------------------------------------------------------
+
+def log_policy_snapshot(signature: str, policy, n_states: int):
+    """Serialize current policy Q-values / action logits to a JSON file for the dashboard."""
+    if not signature:
+        return
+
+    log_dir = os.path.join(PROJECT_ROOT, "log", "policies")
+    os.makedirs(log_dir, exist_ok=True)
+    filename = os.path.join(log_dir, f"{signature}_live.json")
+
+    state_tensor = torch.FloatTensor(np.identity(n_states))
+
+    with torch.no_grad():
+        if hasattr(policy, "actor"):  # PPO
+            actor_out = policy.actor(state_tensor)
+            if isinstance(actor_out, tuple):
+                actor_out = actor_out[0]
+            q_values = actor_out.cpu().numpy().tolist()
+        else:
+            return
+
+    snapshot = {
+        "n_states": n_states,
+        "q_values": q_values,  # Key reused from DQN era for UI compatibility
+    }
+    with open(filename, "w") as f:
+        json.dump(snapshot, f)
+
+
+# ---------------------------------------------------------------------------
+# Environment loading helpers
+# ---------------------------------------------------------------------------
+
+def load_testing_envs():
+    envs = pickle.load(open(os.path.join(log_path, "testing_envs.pkl"), "rb"))
+    return envs
+
+
+def load_best_policy(p: P, filename: str = "best_policy.pth", env_type: str = "wf", ppo: bool = True):
+    test_envs_list = load_testing_envs()
+    test_envs = DummyVectorEnv([lambda e=e: e for e in test_envs_list])
+    policy = get_ppo_policy(p, test_envs).eval()
+    policy = load_best_fn(policy, filename)
+    return policy
+
+
+def load_random_policy(p: P):
+    """Return a freshly initialised (untrained) PPO policy on WF landscapes.
+
+    Note: This returns an *untrained* policy whose actions are effectively random.
+    Used as a random-policy baseline for evaluation.
+    """
+    test_envs_list = load_testing_envs()
+    test_envs = DummyVectorEnv([lambda e=e: e for e in test_envs_list])
+    return get_ppo_policy(p, test_envs)
+
+
+# ---------------------------------------------------------------------------
+# Training — Wright-Fisher Landscapes
+# ---------------------------------------------------------------------------
+
+def train_wf_landscapes(p: P, signature: str = None):
+    v_N = int(np.log2(p.state_shape[0]))
+
+    from ..core.landscapes import Landscape
+
+    landscape_list = []
+
+    if hasattr(p, "dataset") and p.dataset == "chen":
+        from evodm.envs import define_chen_landscapes
+        print("Using Chen landscapes for Wright-Fisher training.")
+        v_N = 3
+        chen_data = define_chen_landscapes()
+        num_drugs = len(chen_data)
+
+        g_min, g_max = np.min(chen_data), np.max(chen_data)
+        chen_data_norm = (chen_data - g_min) / (g_max - g_min)
+        print(f"Chen Data Normalised: Min={g_min:.4f}, Max={g_max:.4f}")
+
+        for i in range(num_drugs):
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=chen_data_norm[i], g_min=g_min, g_max=g_max))
+
+    elif hasattr(p, "dataset") and p.dataset == "four_state":
+        from evodm.envs import define_four_state_landscapes
+        print("Using Four-State landscapes for Wright-Fisher training.")
+        v_N = 2
+        four_state_data = define_four_state_landscapes()
+        num_drugs = len(four_state_data)
+
+        g_min, g_max = np.min(four_state_data), np.max(four_state_data)
+        four_state_data_norm = (four_state_data - g_min) / (g_max - g_min)
+        print(f"Four-State Data Normalised: Min={g_min:.4f}, Max={g_max:.4f}")
+
+        for i in range(num_drugs):
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=four_state_data_norm[i], g_min=g_min, g_max=g_max))
+
+    else:
+        print("Using synthetic random landscapes for Wright-Fisher training.")
+        num_drugs = 10
+        landscape_list = [Landscape(v_N, sigma=0.5) for _ in range(num_drugs)]
+
+    # Save shared landscapes so run.py evaluation uses the same data
+    print("Saving landscapes to active_landscapes.pkl")
+    with open(os.path.join(log_path, "active_landscapes.pkl"), "wb") as f:
+        pickle.dump(landscape_list, f)
+
+    print(f"Number of drugs: {len(landscape_list)}")
+    train_envs, test_envs = WrightFisherEnv.getEnv(
+        4, 2,
+        landscape_list=landscape_list,
+        gen_per_step=getattr(p, "gen_per_step", 500),
+        seq_length=v_N,
+        random_start=True,
+        episode_steps=getattr(p, "episode_steps", 20),
+        reward_scale=getattr(p, "reward_scale", 100.0),
+    )
+
+    print("Saving testing environments to testing_envs.pkl")
+    with open(os.path.join(log_path, "testing_envs.pkl"), "wb") as f:
+        pickle.dump([worker.env for worker in train_envs.workers], f)
+
+    if getattr(p, "reward_clip", False):
+        print("Enable reward clipping (WF)")
+        train_envs = VectorRewardClip(train_envs, reward_min=-5.0, reward_max=5.0)
+
+    policy = get_ppo_policy(p, train_envs)
+
+    def save_best_v2(policy: BasePolicy):
+        base_name = "best_policy.pth"
+        filename = f"{Path(base_name).stem}_{signature}.pth" if signature else base_name
+        os.makedirs(log_path, exist_ok=True)
+        torch.save(policy.state_dict(), os.path.join(log_path, filename))
+        print(f"Best policy saved to: {os.path.join(log_path, filename)}")
+
+    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
+    test_collector = Collector(policy, test_envs)
+
+    # Warm-up collection before training begins
+    train_collector.reset()
+    train_collector.collect(n_step=p.batch_size * 10)
+
+    print(f"Max epochs set to: {p.epochs}")
+
+    sig = signature if signature else "wf_ls"
+    metrics_logger = MetricsLogger(sig)
+    last_loss = [None]  # Mutable container so nested callbacks can update it
+
+    def test_fn(epoch, env_step):
+        if test_collector:
+            stats = test_collector.collect(n_episode=p.test_episodes)
+            if stats.returns_stat:
+                metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
+            log_policy_snapshot(sig, policy, 2**v_N)
+
+    def train_fn(epoch, env_step):
+        # Decay entropy more aggressively
+        if epoch < p.epochs * 0.2:
+            current_ent_coef = getattr(p, "ent_coef", 0.05)
+        else:
+            # Drop to 0.01 by 60% of training
+            decay_steps = p.epochs * 0.4
+            current_ent_coef = max(policy.ent_coef - (getattr(p, "ent_coef", 0.05) - 0.01) / decay_steps, 0.01)
+        policy.ent_coef = current_ent_coef
+
+    wrapped_logger = LossCapturingLogger(logger, last_loss)
+
+    drug_trainer = OnpolicyTrainer(
+        policy=policy,
+        max_epoch=p.epochs,
+        batch_size=p.batch_size,
+        train_collector=train_collector,
+        test_collector=test_collector,
+        step_per_epoch=p.train_steps_per_epoch,
+        repeat_per_collect=8,  # Recommended value for PPO
+        episode_per_test=p.test_episodes,
+        step_per_collect=p.train_steps_per_epoch,
+        train_fn=train_fn,
+        test_fn=test_fn,
+        stop_fn=lambda mean_rewards: None,
+        save_best_fn=save_best_v2,
+        logger=wrapped_logger,
+    )
+    result = drug_trainer.run()
+    print(f"Drug Cycling Training finished with result: {result}")
+
+    test_result = test_collector.collect(n_episode=p.test_episodes)
+    print(f"Final testing result: {test_result}")
+
+
+# ---------------------------------------------------------------------------
+# Policy constructors
+# ---------------------------------------------------------------------------
+
+def get_ppo_policy(p: P, train_envs: DummyVectorEnv) -> PPOPolicy:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    activation = get_activation(p.activation)
+
+    obs_shape = train_envs.get_env_attr("observation_space")[0].shape
+    action_shape = train_envs.get_env_attr("action_space")[0].n
+
+    net = Net(
+        state_shape=obs_shape,
+        hidden_sizes=[128, 128],
+        activation=activation,
+        device=device,
+    )
+    actor = Actor(
+        preprocess_net=net,
+        action_shape=action_shape,
+        hidden_sizes=[256, 256, 256],
+        device=device,
+    ).to(device)
+    critic = Critic(
+        preprocess_net=net,
+        hidden_sizes=[256, 256, 256],
+        device=device,
+    ).to(device)
+
+    optim = Adam(list(actor.parameters()) + list(critic.parameters()), lr=p.lr)
+
+    policy = PPOPolicy(
+        actor=actor,
+        critic=critic,
+        optim=optim,
+        dist_fn=torch.distributions.Categorical,
+        action_space=train_envs.get_env_attr("action_space")[0],
+        discount_factor=0.99,
+        max_grad_norm=0.5,
+        vf_coef=0.5,
+        ent_coef=getattr(p, "ent_coef", 0.05),
+        gae_lambda=0.95,
+        reward_normalization=True,
+        action_scaling=False,
+        deterministic_eval=True,
+        dual_clip=None,
+        value_clip=True,
+        eps_clip=0.2,
+        advantage_normalization=True,
+        recompute_advantage=False,
+    )
+    print("Policy Action Space:", policy.action_space)
+    return policy
+
+
+# ---------------------------------------------------------------------------
+# Policy persistence
+# ---------------------------------------------------------------------------
+
+def load_best_fn(policy: BasePolicy, filename: str = "best_policy.pth", path: str = log_path) -> BasePolicy:
+    full_path = os.path.join(path, filename)
+    print(f"Loading best policy from: {full_path}")
+    policy.load_state_dict(torch.load(full_path))
+    policy.eval()
+    return policy
