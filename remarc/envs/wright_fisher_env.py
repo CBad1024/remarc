@@ -47,10 +47,11 @@ class WrightFisherEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         if len(self.fit_trajectory) == 0:
-            self.prev_avg_fitness = 3.5
+            self.prev_avg_fitness = 1.0  # Sensible default for raw Chen values
         else:
             self.prev_avg_fitness = np.mean(self.fit_trajectory)
         self.fit_trajectory = []
+        self.prev_step_fitness = None  # Track step-to-step changes
         super().reset(seed=seed)
         if self.random_start:
             # Start at a random genotype
@@ -91,18 +92,28 @@ class WrightFisherEnv(gym.Env):
         avg_fit = self.avg_fitness()
         self.fit_trajectory.append(avg_fit)
 
-        # Reward structure quadratically prioritizes small fitnesses
-        reward = ((1-avg_fit) * self.reward_scale)
+        # --- Reward: lower fitness = better drug efficacy ---
+        # Scale (1 - avg_fit) with a large multiplier so that ~1% fitness
+        # differences between drugs produce meaningful reward differences.
+        reward = (1 - avg_fit) * self.reward_scale
+
+        # Delta bonus: reward the agent for *reducing* fitness vs previous step.
+        # This creates temporal credit — choosing drugs that shift the population
+        # toward vulnerability matters, not just the instantaneous fitness.
+        if self.prev_step_fitness is not None:
+            delta = self.prev_step_fitness - avg_fit  # positive when fitness drops
+            reward += delta * self.reward_scale * 0.5
+        self.prev_step_fitness = avg_fit
 
         terminated = self.generation >= self.total_generations
         truncated = False  # Gymnasium requires this explicitly
         info = {'avg_fitness': avg_fit}
 
         if terminated:
-            # terminal reward structure
+            # Terminal bonus: reward sustained low fitness over the episode
             final_avg_fit = np.mean(self.fit_trajectory[-20:])
-            reward += (((1-final_avg_fit)*50) * np.abs((1-final_avg_fit)*50)) * (self.reward_scale / 10.0)
-            
+            reward += (1 - final_avg_fit) * self.reward_scale * 10
+
         return obs, reward, terminated, truncated, info
 
     def _get_obs(self):
@@ -182,11 +193,8 @@ class WrightFisherEnv(gym.Env):
         fitness_vec = self.drug_landscapes[self.current_drug]
         mean_fitness = np.dot(state_vector, fitness_vec)
 
-        if raw:
-            # Get g_min, g_max from the active landscape object
-            ls = self.landscape_list[self.current_drug]
-            if hasattr(ls, "g_min") and ls.g_min is not None:
-                return mean_fitness * (ls.g_max - ls.g_min) + ls.g_min
+        # With raw (unnormalized) fitness values, mean_fitness is already
+        # on the original scale, so just return it directly.
         return mean_fitness
 
     def get_transition_matrix(self, drug_index, conc_index=0):

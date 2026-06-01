@@ -1,3 +1,5 @@
+import dataclasses
+import datetime
 import json
 import os
 import pickle
@@ -220,7 +222,37 @@ def load_random_policy(p: P):
 # Training — Wright-Fisher Landscapes
 # ---------------------------------------------------------------------------
 
+def save_run_params(p: P, signature: str | None):
+    """Persist the full parameter set for this run to a JSON file.
+
+    Saved to ``log/params/<signature>_params.json`` (or a timestamped
+    fallback when no signature is provided).  Called at the very start
+    of training so the config is recorded even if the run crashes.
+    """
+    params_dir = os.path.join(PROJECT_ROOT, "log", "params")
+    os.makedirs(params_dir, exist_ok=True)
+
+    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    label = signature if signature else f"run_{ts}"
+    filename = os.path.join(params_dir, f"{label}_params.json")
+
+    payload = dataclasses.asdict(p)
+    # Convert tuples (e.g. state_shape) to lists for JSON compatibility
+    for k, v in payload.items():
+        if isinstance(v, tuple):
+            payload[k] = list(v)
+    payload["signature"] = signature
+    payload["timestamp"] = ts
+
+    with open(filename, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"Run parameters saved to: {filename}")
+
+
 def train_wf_landscapes(p: P, signature: str | None = None):
+    # --- Save params before anything else ---
+    save_run_params(p, signature)
+
     v_N = int(np.log2(p.state_shape[0]))
 
     from ..core.landscapes import Landscape
@@ -229,31 +261,29 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     if hasattr(p, "dataset") and p.dataset == "chen":
         from remarc.envs import define_chen_landscapes
-        print("Using Chen landscapes for Wright-Fisher training.")
+        print("Using Chen landscapes for Wright-Fisher training (raw fitness, no normalization).")
         v_N = 3
         chen_data = define_chen_landscapes()
         num_drugs = len(chen_data)
 
         g_min, g_max = np.min(chen_data), np.max(chen_data)
-        chen_data_norm = (chen_data - g_min) / (g_max - g_min)
-        print(f"Chen Data Normalised: Min={g_min:.4f}, Max={g_max:.4f}")
+        print(f"Chen Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
 
         for i in range(num_drugs):
-            landscape_list.append(Landscape(v_N, sigma=0.0, ls=chen_data_norm[i], g_min=g_min, g_max=g_max))
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=chen_data[i], g_min=g_min, g_max=g_max))
 
     elif hasattr(p, "dataset") and p.dataset == "four_state":
         from remarc.envs import define_four_state_landscapes
-        print("Using Four-State landscapes for Wright-Fisher training.")
+        print("Using Four-State landscapes for Wright-Fisher training (raw fitness, no normalization).")
         v_N = 2
         four_state_data = define_four_state_landscapes()
         num_drugs = len(four_state_data)
 
         g_min, g_max = np.min(four_state_data), np.max(four_state_data)
-        four_state_data_norm = (four_state_data - g_min) / (g_max - g_min)
-        print(f"Four-State Data Normalised: Min={g_min:.4f}, Max={g_max:.4f}")
+        print(f"Four-State Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
 
         for i in range(num_drugs):
-            landscape_list.append(Landscape(v_N, sigma=0.0, ls=four_state_data_norm[i], g_min=g_min, g_max=g_max))
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=four_state_data[i], g_min=g_min, g_max=g_max))
 
     else:
         print("Using synthetic random landscapes for Wright-Fisher training.")
@@ -362,19 +392,19 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPo
 
     net = Net(
         state_shape=obs_shape,
-        hidden_sizes=[128, 128],
+        hidden_sizes=[64, 64],
         activation=activation,
         device=device,
     )
     actor = Actor(
         preprocess_net=net,
         action_shape=action_shape,
-        hidden_sizes=[256, 256, 256],
+        hidden_sizes=[32],
         device=device,
     ).to(device)
     critic = Critic(
         preprocess_net=net,
-        hidden_sizes=[256, 256, 256],
+        hidden_sizes=[32],
         device=device,
     ).to(device)
 

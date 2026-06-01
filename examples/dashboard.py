@@ -380,7 +380,7 @@ def plot_live_policy(tab_id):
 
 def plot_baseline_comparison(tab_id):
     """
-    Plot fitness trajectories: Learned vs Best Single-Drug
+    Plot fitness trajectories: Learned vs ALL Single-Drug baselines
     """
     sim = st.session_state.sims[tab_id]
     signature = sim.get("signature")
@@ -406,7 +406,7 @@ def plot_baseline_comparison(tab_id):
             with open(random_file) as f:
                 random_data = json.load(f)
         
-        st.subheader("Policy Comparison: Learned vs Baselines")
+        st.subheader("Policy Comparison: Learned vs All Drug Baselines")
         
         # Display summary metrics
         cols = st.columns(4) if random_data else st.columns(3)
@@ -414,13 +414,13 @@ def plot_baseline_comparison(tab_id):
             st.metric(
                 "Best Single Drug",
                 f"Drug #{baseline_data['best_drug']}",
-                f"{baseline_data['mean_fitness']:.3f}"
+                f"{baseline_data['mean_fitness']:.4f}"
             )
         with cols[1]:
             st.metric(
                 "Learned Policy",
                 "Multi-Drug Cycling",
-                f"{learned_data['mean_fitness']:.3f}"
+                f"{learned_data['mean_fitness']:.4f}"
             )
         
         if random_data:
@@ -428,92 +428,104 @@ def plot_baseline_comparison(tab_id):
                 st.metric(
                     "Random Policy",
                     "Random Drugs",
-                    f"{random_data['mean_fitness']:.3f}"
+                    f"{random_data['mean_fitness']:.4f}"
                 )
             with cols[3]:
                 improvement = (baseline_data['mean_fitness'] - learned_data['mean_fitness']) / baseline_data['mean_fitness'] * 100
                 st.metric(
-                    "Improvement",
-                    f"{improvement:.1f}%",
-                    delta=f"{improvement:.1f}%",
+                    "Improvement vs Best Drug",
+                    f"{improvement:.2f}%",
+                    delta=f"{improvement:.2f}%",
                     delta_color="inverse" if improvement > 0 else "normal"
                 )
         else:
             with cols[2]:
                 improvement = (baseline_data['mean_fitness'] - learned_data['mean_fitness']) / baseline_data['mean_fitness'] * 100
                 st.metric(
-                    "Improvement",
-                    f"{improvement:.1f}%",
-                    delta=f"{improvement:.1f}%",
+                    "Improvement vs Best Drug",
+                    f"{improvement:.2f}%",
+                    delta=f"{improvement:.2f}%",
                     delta_color="inverse" if improvement > 0 else "normal"
                 )
+        
+        # Determine data format: new (all_drug_trajectories) or old (trajectories)
+        has_all_drugs = 'all_drug_trajectories' in baseline_data
         
         # Plot fitness trajectories
         fig, ax = plt.subplots(figsize=(12, 6))
         
-        # Convert trajectories to numpy arrays and pad to same length
-        baseline_trajs = baseline_data['trajectories']
         learned_trajs = learned_data['trajectories']
         random_trajs = random_data['trajectories'] if random_data else []
         
-        max_len = max(
-            max(len(t) for t in baseline_trajs) if baseline_trajs else 0,
-            max(len(t) for t in learned_trajs) if learned_trajs else 0,
-            max(len(t) for t in random_trajs) if random_trajs else 0
-        )
+        # Compute max_len across all trajectory sources
+        all_traj_lengths = [len(t) for t in learned_trajs]
+        if random_trajs:
+            all_traj_lengths += [len(t) for t in random_trajs]
         
+        if has_all_drugs:
+            for drug_trajs in baseline_data['all_drug_trajectories'].values():
+                all_traj_lengths += [len(t) for t in drug_trajs]
+        
+        max_len = max(all_traj_lengths) if all_traj_lengths else 0
         if max_len == 0:
             st.warning("No trajectory data available")
             return
         
-        # Pad and compute mean ± std
-        baseline_padded = np.array([
-            t + [np.nan] * (max_len - len(t))
-            for t in baseline_trajs
-        ])
-        learned_padded = np.array([
-            t + [np.nan] * (max_len - len(t))
-            for t in learned_trajs
-        ])
-        
-        baseline_mean = np.nanmean(baseline_padded, axis=0)
-        baseline_std = np.nanstd(baseline_padded, axis=0)
-        learned_mean = np.nanmean(learned_padded, axis=0)
-        learned_std = np.nanstd(learned_padded, axis=0)
-
-        random_mean = None
-        random_std = None
-        if random_data:
-            random_padded = np.array([
-                t + [np.nan] * (max_len - len(t))
-                for t in random_trajs
-            ])
-            random_mean = np.nanmean(random_padded, axis=0)
-            random_std = np.nanstd(random_padded, axis=0)
-        
         timesteps = np.arange(max_len)
         
-        # Plot means
-        ax.plot(timesteps, baseline_mean, label=f'Best Single Drug (#{baseline_data["best_drug"]})', color='orange', linewidth=2)
-        ax.plot(timesteps, learned_mean, label='Learned Policy', color='blue', linewidth=2)
-        if random_data and random_mean is not None:
-            ax.plot(timesteps, random_mean, label='Random Policy', color='red', linewidth=2, linestyle=':')
+        # Learned policy
+        learned_padded = np.array([t + [np.nan] * (max_len - len(t)) for t in learned_trajs])
+        learned_mean = np.nanmean(learned_padded, axis=0)
+        learned_std = np.nanstd(learned_padded, axis=0)
+        ax.plot(timesteps, learned_mean, label='Learned Policy', color='blue', linewidth=2.5)
+        ax.fill_between(timesteps, learned_mean - learned_std, learned_mean + learned_std, alpha=0.15, color='blue')
         
-        # Plot std bands
-        ax.fill_between(timesteps, baseline_mean - baseline_std, baseline_mean + baseline_std, alpha=0.3, color='orange')
-        ax.fill_between(timesteps, learned_mean - learned_std, learned_mean + learned_std, alpha=0.3, color='blue')
-        if random_data and random_mean is not None and random_std is not None:
+        # All single-drug baselines
+        drug_colors = ['#e67e22', '#27ae60', '#8e44ad', '#c0392b', '#2980b9', '#f39c12', '#1abc9c', '#d35400', '#7f8c8d', '#2c3e50']
+        best_drug = baseline_data.get('best_drug', -1)
+        
+        if has_all_drugs:
+            for drug_key, drug_trajs in baseline_data['all_drug_trajectories'].items():
+                drug_idx = int(drug_key)
+                color = drug_colors[drug_idx % len(drug_colors)]
+                padded = np.array([t + [np.nan] * (max_len - len(t)) for t in drug_trajs])
+                d_mean = np.nanmean(padded, axis=0)
+                d_std = np.nanstd(padded, axis=0)
+                
+                is_best = (drug_idx == best_drug)
+                label = f'Drug {drug_idx}' + (' ★' if is_best else '')
+                lw = 2.0 if is_best else 1.2
+                alpha_line = 1.0 if is_best else 0.7
+                
+                ax.plot(timesteps, d_mean, label=label, color=color, linewidth=lw, linestyle='--', alpha=alpha_line)
+                ax.fill_between(timesteps, d_mean - d_std, d_mean + d_std, alpha=0.05, color=color)
+        else:
+            # Backward compat: old format with only best drug's trajectories
+            baseline_trajs = baseline_data.get('trajectories', [])
+            if baseline_trajs:
+                padded = np.array([t + [np.nan] * (max_len - len(t)) for t in baseline_trajs])
+                b_mean = np.nanmean(padded, axis=0)
+                b_std = np.nanstd(padded, axis=0)
+                ax.plot(timesteps, b_mean, label=f'Best Single Drug (#{best_drug})', color='orange', linewidth=2, linestyle='--')
+                ax.fill_between(timesteps, b_mean - b_std, b_mean + b_std, alpha=0.15, color='orange')
+        
+        # Random policy
+        if random_data and random_trajs:
+            random_padded = np.array([t + [np.nan] * (max_len - len(t)) for t in random_trajs])
+            random_mean = np.nanmean(random_padded, axis=0)
+            random_std = np.nanstd(random_padded, axis=0)
+            ax.plot(timesteps, random_mean, label='Random Policy', color='red', linewidth=2, linestyle=':')
             ax.fill_between(timesteps, random_mean - random_std, random_mean + random_std, alpha=0.1, color='red')
         
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Population Fitness')
         ax.set_title('Fitness Trajectory Comparison (Mean ± Std)')
-        ax.legend()
+        ax.legend(loc='best', fontsize=9)
         ax.grid(alpha=0.3)
         
         st.pyplot(fig)
         
-        st.caption("💡 Lower fitness indicates better drug efficacy. Learned policy should show lower fitness (more effective) than single-drug baseline.")
+        st.caption("💡 Lower fitness indicates better drug efficacy. Learned policy should show lower fitness (more effective) than single-drug baselines.")
         
     except Exception as e:
         st.error(f"Error loading baseline comparison: {e}")

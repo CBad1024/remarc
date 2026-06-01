@@ -305,13 +305,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     if signature:
         print("\nEvaluating best single-drug baseline...")
         try:
-            # Get landscapes based on dataset type
-            if hp_args and hp_args.dataset == "chen":
-                landscapes = define_chen_landscapes()
-            elif hp_args and hp_args.dataset == "four_state":
-                landscapes = define_four_state_landscapes()
-            else:
-                landscapes = np.array([l.ls for l in active_landscapes])
+            # Use the SAME landscapes the learned policy was trained/evaluated on
+            # to ensure fitness values are on the same scale.
+            landscapes = np.array([l.ls for l in active_landscapes])
             
             # Evaluate all single-drug policies
             best_drug_id, best_fitness, all_trajectories = evaluate_best_single_drug(
@@ -326,12 +322,14 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             assert best_drug_id is not None and best_fitness is not None, "No best drug found"
             print(f"Best single drug: #{best_drug_id} with mean fitness: {best_fitness:.4f}")
             
-            # Extract trajectories for best drug
-            best_drug_traj = all_trajectories[best_drug_id]
-            best_drug_episodes = []
-            for i in range(20):  # 20 episodes
-                episode_data = best_drug_traj[best_drug_traj['Episode'] == i]
-                best_drug_episodes.append(episode_data['Fitness'].tolist())
+            # Extract trajectories for ALL single-drug baselines
+            all_drug_episodes = {}  # drug_index -> list of episode trajectories
+            for drug_idx, traj_df in enumerate(all_trajectories):
+                drug_episodes = []
+                for i in range(20):
+                    episode_data = traj_df[traj_df['Episode'] == i]
+                    drug_episodes.append(episode_data['Fitness'].tolist())
+                all_drug_episodes[drug_idx] = drug_episodes
             
             # Extract trajectories for learned policy
             learned_episodes = []
@@ -355,7 +353,12 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                 json.dump({
                     'best_drug': int(best_drug_id),
                     'mean_fitness': float(best_fitness),
-                    'trajectories': best_drug_episodes
+                    'num_drugs': len(all_trajectories),
+                    'all_drug_trajectories': {str(k): v for k, v in all_drug_episodes.items()},
+                    'all_drug_mean_fitness': {
+                        str(k): float(np.mean([np.mean(ep) for ep in v]))
+                        for k, v in all_drug_episodes.items()
+                    }
                 }, f)
             
             learned_file = os.path.join(baseline_dir, f"{signature}_learned.json")
@@ -376,28 +379,36 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
 
             # --- PLOTTING ---
             print("\nGenerating performance plot...")
-            plt.figure(figsize=(10, 6))
+            plt.figure(figsize=(12, 7))
             
             # Learned Policy
             learned_mean = results_df.groupby('Time Step')['Fitness'].mean()
             learned_std = results_df.groupby('Time Step')['Fitness'].std()
             
-            plt.plot(learned_mean.index, learned_mean, label=f'Learned Policy', linewidth=2, color='blue')
+            plt.plot(learned_mean.index, learned_mean, label='Learned Policy', linewidth=2.5, color='blue')
             plt.fill_between(learned_mean.index, 
                              learned_mean - learned_std, 
                              learned_mean + learned_std, 
                              color='blue', alpha=0.1)
 
-            # Best Single Drug Policy
-            best_drug_df = all_trajectories[best_drug_id]
-            best_single_mean = best_drug_df.groupby('Time Step')['Fitness'].mean()
-            best_single_std = best_drug_df.groupby('Time Step')['Fitness'].std()
-            
-            plt.plot(best_single_mean.index, best_single_mean, label=f'Best Single Drug (Idx {best_drug_id})', linewidth=2, color='orange', linestyle='--')
-            plt.fill_between(best_single_mean.index,
-                             best_single_mean - best_single_std,
-                             best_single_mean + best_single_std,
-                             color='orange', alpha=0.1)
+            # All Single Drug Policies
+            drug_colors = ['#e67e22', '#27ae60', '#8e44ad', '#c0392b', '#2980b9', '#f39c12', '#1abc9c', '#d35400', '#7f8c8d', '#2c3e50']
+            for drug_idx, traj_df in enumerate(all_trajectories):
+                color = drug_colors[drug_idx % len(drug_colors)]
+                drug_mean = traj_df.groupby('Time Step')['Fitness'].mean()
+                drug_std = traj_df.groupby('Time Step')['Fitness'].std()
+                
+                is_best = (drug_idx == best_drug_id)
+                label = f'Drug {drug_idx}' + (' ★' if is_best else '')
+                lw = 2.0 if is_best else 1.2
+                alpha_line = 1.0 if is_best else 0.7
+                
+                plt.plot(drug_mean.index, drug_mean, label=label, linewidth=lw, 
+                         color=color, linestyle='--', alpha=alpha_line)
+                plt.fill_between(drug_mean.index,
+                                 drug_mean - drug_std,
+                                 drug_mean + drug_std,
+                                 color=color, alpha=0.05)
 
             # Random Policy
             if random_results_df_plot is not None:
@@ -412,13 +423,13 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             plt.xlabel('Time Step')
             plt.ylabel('Population Fitness')
             plt.title('Policy Performance Over Time (Wright-Fisher)')
-            plt.legend()
+            plt.legend(loc='best', fontsize=9)
             plt.grid(True, alpha=0.3)
             
             plot_dir = os.path.join(project_root, "log", "plots")
             os.makedirs(plot_dir, exist_ok=True)
             plot_file = os.path.join(plot_dir, f"performance_comparison_{signature}.png")
-            plt.savefig(plot_file, dpi=300)
+            plt.savefig(plot_file, dpi=300, bbox_inches='tight')
             plt.close()
             print(f"Saved performance plot to: {plot_file}")
 

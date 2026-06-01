@@ -70,10 +70,20 @@ def fast_choice(options, probs):
             return options[i]
     return options[-1]
 
-def define_chen_landscapes(as_dict=False):
+def define_chen_landscapes(as_dict=False, center_at_zero=False):
     """
     Chen et al. fitness landscapes for 8 genotypes (N=3) and 4 drugs.
     Source: Chen et al. evolutionary dynamics paper
+
+    Parameters
+    ----------
+    as_dict : bool
+        If True, return a dict keyed by drug name instead of a list.
+    center_at_zero : bool
+        If True, subtract 1.0 from all fitness values so the landscape is
+        centered around 0 instead of 1.  This amplifies the signal-to-noise
+        ratio for RL reward calculations while preserving the relative
+        fitness differences that drive selection.
     """
     if as_dict:
         drugs = {}
@@ -87,7 +97,10 @@ def define_chen_landscapes(as_dict=False):
         drugs.append([0.995, 1.005, 1.002, 0.999, 1.005, 0.994, 0.999, 1.001])
         drugs.append([0.997, 1.001, 0.989, 1.003, 1.003, 0.998, 1.010, 0.997])
         drugs.append([1.005, 0.988, 0.999, 1.001, 0.995, 1.011, 1.000, 0.999])
-    return np.array(drugs)
+    result = np.array(drugs)
+    if center_at_zero:
+        result = result - 1.0
+    return result
 
 def define_four_state_landscapes(as_dict=False):
     """
