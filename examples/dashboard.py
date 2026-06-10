@@ -531,6 +531,7 @@ def plot_baseline_comparison(tab_id):
         
         learned_trajs = learned_data['trajectories']
         random_trajs = random_data['trajectories'] if random_data else []
+        shepherd_trajs = baseline_data.get('shepherd_trajectories')
         
         # Normalize trajectories to relative fitness (0 to 1) across all policies
         all_vals = []
@@ -538,6 +539,9 @@ def plot_baseline_comparison(tab_id):
             all_vals.extend(t)
         for t in random_trajs:
             all_vals.extend(t)
+        if shepherd_trajs:
+            for t in shepherd_trajs:
+                all_vals.extend(t)
         if has_all_drugs:
             for drug_trajs in baseline_data['all_drug_trajectories'].values():
                 for t in drug_trajs:
@@ -556,6 +560,8 @@ def plot_baseline_comparison(tab_id):
             learned_trajs = [[(v - global_min) / denom for v in t] for t in learned_trajs]
             if random_trajs:
                 random_trajs = [[(v - global_min) / denom for v in t] for t in random_trajs]
+            if shepherd_trajs:
+                shepherd_trajs = [[(v - global_min) / denom for v in t] for t in shepherd_trajs]
             
             if has_all_drugs:
                 # Create a copy or update baseline_data['all_drug_trajectories']
@@ -573,6 +579,8 @@ def plot_baseline_comparison(tab_id):
         all_traj_lengths = [len(t) for t in learned_trajs]
         if random_trajs:
             all_traj_lengths += [len(t) for t in random_trajs]
+        if shepherd_trajs:
+            all_traj_lengths += [len(t) for t in shepherd_trajs]
         
         if has_all_drugs:
             for drug_trajs in baseline_data['all_drug_trajectories'].values():
@@ -628,6 +636,14 @@ def plot_baseline_comparison(tab_id):
             random_std = np.nanstd(random_padded, axis=0)
             ax.plot(timesteps, random_mean, label='Random Policy', color='red', linewidth=2, linestyle=':')
             ax.fill_between(timesteps, random_mean - random_std, random_mean + random_std, alpha=0.1, color='red')
+            
+        # SHEPHERD policy
+        if shepherd_trajs:
+            shepherd_padded = np.array([t + [np.nan] * (max_len - len(t)) for t in shepherd_trajs])
+            shepherd_mean = np.nanmean(shepherd_padded, axis=0)
+            shepherd_std = np.nanstd(shepherd_padded, axis=0)
+            ax.plot(timesteps, shepherd_mean, label='SHEPHERD Policy', color='black', linewidth=2, linestyle='-.')
+            ax.fill_between(timesteps, shepherd_mean - shepherd_std, shepherd_mean + shepherd_std, alpha=0.1, color='black')
         
         ax.set_xlabel('Timestep')
         ax.set_ylabel('relative fitness')

@@ -1458,6 +1458,16 @@ wheels = [
 ]
 
 [[package]]
+name = "pymdptoolbox"
+version = "4.0b3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/55/500c4089d2951b794acd4bf9ed2c0ab5082e242bc15c5b4154f557922832/pymdptoolbox-4.0-b3.tar.gz", hash = "sha256:eca66535c25eee8f400dda8d5d1be1d6f728903a18a5a6ffad903254559d8264", size = 22473, upload-time = "2015-01-12T03:29:37.274Z" }
+
+[[package]]
 name = "pyparsing"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1537,6 +1547,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "plotly" },
+    { name = "pymdptoolbox" },
     { name = "scipy" },
     { name = "streamlit" },
     { name = "tianshou" },
@@ -1557,6 +1568,7 @@ requires-dist = [
     { name = "numpy", specifier = "~=1.26.4" },
     { name = "pandas", specifier = "~=2.3.1" },
     { name = "plotly", specifier = ">=6.6.0" },
+    { name = "pymdptoolbox", specifier = ">=4.0b3" },
     { name = "pytest", marker = "extra == 'test'", specifier = "~=8.4.1" },
     { name = "scipy", specifier = "~=1.16.0" },
     { name = "streamlit", specifier = ">=1.30.0" },

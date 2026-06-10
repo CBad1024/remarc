@@ -24,7 +24,8 @@ dependencies = [
     "gymnasium~=0.28.1",
     "networkx~=3.5",
     "plotly>=6.6.0",
-    "streamlit>=1.30.0"
+    "streamlit>=1.30.0",
+    "pymdptoolbox>=4.0b3",
 ]
 
 [project.optional-dependencies]

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import Collector, VectorReplayBuffer, Batch
 from tianshou.env import DummyVectorEnv, VectorEnvWrapper
 from tianshou.policy import PPOPolicy, BasePolicy
 from tianshou.trainer import OnpolicyTrainer
@@ -212,17 +212,28 @@ def load_best_policy(p: P, filename: str = "best_policy.pth", env_type: str = "w
     return policy
 
 
-def load_random_policy(p: P):
-    """Return a freshly initialised (untrained) PPO policy on WF landscapes.
+class RandomPolicy:
+    """Trivial policy that samples actions uniformly at random.
 
-    Note: This returns an *untrained* policy whose actions are effectively random.
-    Used as a random-policy baseline for evaluation.
+    Conforms to the Tianshou ``policy(batch).act`` interface so it can be
+    used as a drop-in replacement in ``run_sim_tianshou``.
     """
-    import math
-    seq_length = int(math.log2(p.state_shape[0]))
-    env = WrightFisherEnv(seq_length=seq_length, num_drugs=p.num_actions)
-    test_envs = DummyVectorEnv([lambda: env])
-    return get_ppo_policy(p, test_envs)
+
+    def __init__(self, num_actions: int):
+        self.num_actions = num_actions
+
+    def __call__(self, batch, **kwargs):
+        n = len(batch.obs)
+        acts = np.array([np.random.randint(self.num_actions) for _ in range(n)])
+        return Batch(act=acts)
+
+    def eval(self):
+        return self
+
+
+def load_random_policy(p: P):
+    """Return a RandomPolicy that samples uniformly from the action space."""
+    return RandomPolicy(num_actions=p.num_actions)
 
 
 # ---------------------------------------------------------------------------

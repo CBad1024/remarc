@@ -100,7 +100,7 @@ def _collect_frame_data(env, policy, episode_steps: int) -> list:
     env.reset()
     obs = env.get_obs()
 
-    freqs0 = np.array([env.pop.get(g, 0) for g in env.genotypes], dtype=float) / env.pop_size
+    freqs0 = env.freqs.copy()
     frames.append({
         "freqs": freqs0,
         "drug_idx": env.current_drug,
