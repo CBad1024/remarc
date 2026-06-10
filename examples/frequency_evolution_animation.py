@@ -20,6 +20,7 @@ Output: wf_tumor_evolution_chen.html  (fully interactive, pausable in-browser)
 import sys
 import os
 from pathlib import Path
+from typing import Union
 
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root))
@@ -210,7 +211,7 @@ def _gauge_trace(mean_fit: float) -> go.Scatter3d:
 # Figure builders
 # ---------------------------------------------------------------------------
 
-def _build_fig3d(frame_data_list: list, ls: np.ndarray, panel_id: str, include_plotlyjs: str = False) -> str:
+def _build_fig3d(frame_data_list: list, ls: np.ndarray, panel_id: str, include_plotlyjs: Union[str, bool] = False) -> str:
     """Build and return the 3D figure as an HTML div snippet."""
     surface = _build_surface(ls)
     frames_pl = []
@@ -365,7 +366,7 @@ def create_frequency_gif(
 
     def _make_env():
         return WrightFisherEnv(
-            seascapes=False, num_drugs=NUM_DRUGS, seq_length=v_N,
+            num_drugs=NUM_DRUGS, seq_length=v_N,
             landscape_list=landscape_list, pop_size=pop_size,
             gen_per_step=gen_per_step, total_generations=total_gens,
         )
@@ -393,9 +394,8 @@ def create_frequency_gif(
 
     if os.path.exists(policy_path):
         from remarc.agents.tianshou_agent import get_ppo_policy
-        _train_envs, _ = WrightFisherEnv.getEnv(2, 2, False,
-                                                  landscape_list=landscape_list,
-                                                  num_drugs=NUM_DRUGS)
+        _train_envs, _ = WrightFisherEnv.getEnv(2, 2,
+                                                   landscape_list=landscape_list)
         opt_policy = get_ppo_policy(p, _train_envs)
         try:
             opt_policy.load_state_dict(_torch.load(policy_path, map_location="cpu"))

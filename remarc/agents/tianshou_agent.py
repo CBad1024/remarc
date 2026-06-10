@@ -200,8 +200,13 @@ def load_testing_envs():
 
 
 def load_best_policy(p: P, filename: str = "best_policy.pth", env_type: str = "wf", ppo: bool = True):
-    test_envs_list = load_testing_envs()
-    test_envs = DummyVectorEnv([lambda e=e: e for e in test_envs_list])
+    # Build a fresh environment from Presets rather than relying on
+    # testing_envs.pkl, which is overwritten by every training run and
+    # may have a different obs_shape than the checkpoint being loaded.
+    import math
+    seq_length = int(math.log2(p.state_shape[0]))
+    env = WrightFisherEnv(seq_length=seq_length, num_drugs=p.num_actions)
+    test_envs = DummyVectorEnv([lambda: env])
     policy = get_ppo_policy(p, test_envs).eval()
     policy = load_best_fn(policy, filename)
     return policy
@@ -213,8 +218,10 @@ def load_random_policy(p: P):
     Note: This returns an *untrained* policy whose actions are effectively random.
     Used as a random-policy baseline for evaluation.
     """
-    test_envs_list = load_testing_envs()
-    test_envs = DummyVectorEnv([lambda e=e: e for e in test_envs_list])
+    import math
+    seq_length = int(math.log2(p.state_shape[0]))
+    env = WrightFisherEnv(seq_length=seq_length, num_drugs=p.num_actions)
+    test_envs = DummyVectorEnv([lambda: env])
     return get_ppo_policy(p, test_envs)
 
 
@@ -274,9 +281,10 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     elif hasattr(p, "dataset") and p.dataset == "four_state":
         from remarc.envs import define_four_state_landscapes
-        print("Using Four-State landscapes for Wright-Fisher training (raw fitness, no normalization).")
+        amp = getattr(p, "landscape_amplification", 1.0)
+        print(f"Using Four-State landscapes for Wright-Fisher training (amplification={amp:.1f}).")
         v_N = 2
-        four_state_data = define_four_state_landscapes()
+        four_state_data = define_four_state_landscapes(amplification=amp)
         num_drugs = len(four_state_data)
 
         g_min, g_max = np.min(four_state_data), np.max(four_state_data)
@@ -304,6 +312,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         random_start=getattr(p, "random_start", True),
         episode_steps=getattr(p, "episode_steps", 20),
         reward_scale=getattr(p, "reward_scale", 100.0),
+        stochastic=getattr(p, "stochastic", True),
     )
 
     print("Saving testing environments to testing_envs.pkl")

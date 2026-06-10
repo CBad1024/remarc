@@ -48,7 +48,7 @@ MODES = {"Wright-Fisher Landscapes": "wf_ls"}
 DATASET_OPTIONS = {
         "Chen et al.": {"N": 3, "description": "Empirical fitness landscapes from Chen et al.", "cli": "chen"},
     "Four-State": {"N": 2, "description": "Empirical four-state fitness landscapes (4 drugs, N=2).", "cli": "four_state"},
-    "Synthetic": {"N": None, "description": "Randomly generated landscapes with configurable N.", "cli": "synthetic"}
+    "Synthetic": {"N": "any", "description": "Randomly generated landscapes with configurable N.", "cli": "synthetic"}
 }
 
 # Initialize session state for simulations
@@ -68,7 +68,7 @@ if "sims" not in st.session_state:
                 "batch_size": 128,
                 "n_mut": 4,
                 "sigma": 0.5,
-                "dataset": "Synthetic (NK)",
+                "dataset": "Synthetic",
                 "pop_size": 10000,
                 "mutation_rate": 1e-5,
                 "gen_per_step": 25,
@@ -77,7 +77,9 @@ if "sims" not in st.session_state:
                 "ent_coef": 0.05,
                 "episode_steps": 20,
                 "reward_scale": 100.0,
-                "random_start": True
+                "random_start": True,
+                "landscape_amplification": 1.0,
+                "stochastic": True
             }
         }
 
@@ -103,7 +105,8 @@ def start_simulation(tab_id):
         "--dataset", DATASET_OPTIONS[sim["hp"]["dataset"]]["cli"],
         "--ent-coef", str(sim["hp"].get("ent_coef", 0.05)),
         "--episode-steps", str(sim["hp"].get("episode_steps", 20)),
-        "--reward-scale", str(sim["hp"].get("reward_scale", 100.0))
+        "--reward-scale", str(sim["hp"].get("reward_scale", 100.0)),
+        "--landscape-amplification", str(sim["hp"].get("landscape_amplification", 1.0))
     ]
 
     if sim["hp"].get("reward_clip", False):
@@ -120,6 +123,10 @@ def start_simulation(tab_id):
             cmd += ["--random-start"]
         else:
             cmd += ["--no-random-start"]
+        if sim["hp"].get("stochastic", True):
+            cmd += ["--stochastic"]
+        else:
+            cmd += ["--no-stochastic"]
 
     if sim["train"] and sim.get("signature"):
         cmd += ["--signature", sim["signature"]]
@@ -223,8 +230,10 @@ def plot_landscape_heatmap(tab_id):
         ax.set_ylabel("Drugs")
         st.pyplot(fig)
     elif sim["hp"]["dataset"] == "Four-State":
-        data = define_four_state_landscapes()
+        amp = sim["hp"].get("landscape_amplification", 1.0)
+        data = define_four_state_landscapes(amplification=amp)
         drug_names = ['A', 'B', 'C', 'D']
+        amp_label = f" (Amplification={amp:.0f}x)" if amp != 1.0 else ""
         
         fig, ax = plt.subplots(figsize=(8, 4))
         im = ax.imshow(data, aspect='auto', cmap="viridis")
@@ -233,7 +242,7 @@ def plot_landscape_heatmap(tab_id):
         ax.set_xticklabels([bin(i)[2:].zfill(2) for i in range(4)], rotation=45)
         ax.set_yticks(range(4))
         ax.set_yticklabels(drug_names)
-        ax.set_title("Four-State Fitness Landscape (N=2)")
+        ax.set_title(f"Four-State Fitness Landscape (N=2){amp_label}")
         ax.set_xlabel("Genotypes")
         ax.set_ylabel("Drugs")
         st.pyplot(fig)
@@ -296,7 +305,8 @@ def plot_live_policy(tab_id):
                 true_data = define_chen_landscapes()  # Shape (4 drugs, 8 genotypes)
                 dataset_name = "Chen et al."
             else:
-                true_data = define_four_state_landscapes()  # Shape (4 drugs, 4 genotypes)
+                amp = sim["hp"].get("landscape_amplification", 1.0)
+                true_data = define_four_state_landscapes(amplification=amp)  # Shape (4 drugs, 4 genotypes)
                 dataset_name = "Four-State"
                 
             # Transpose to match Q-values orientation (genotypes x drugs)
@@ -401,7 +411,8 @@ def plot_simplex_section(tab_id):
     st.subheader("Simplex Policy Visualization")
     st.caption("3D simplex (x₀+x₁+x₂+x₃=1) sliced along x₃. Color shows which drug the policy selects at each population composition.")
 
-    landscapes = define_four_state_landscapes()
+    amp = sim["hp"].get("landscape_amplification", 1.0)
+    landscapes = define_four_state_landscapes(amplification=amp)
 
     # --- Greedy baseline ---
     def greedy_fn(state):
@@ -521,6 +532,43 @@ def plot_baseline_comparison(tab_id):
         learned_trajs = learned_data['trajectories']
         random_trajs = random_data['trajectories'] if random_data else []
         
+        # Normalize trajectories to relative fitness (0 to 1) across all policies
+        all_vals = []
+        for t in learned_trajs:
+            all_vals.extend(t)
+        for t in random_trajs:
+            all_vals.extend(t)
+        if has_all_drugs:
+            for drug_trajs in baseline_data['all_drug_trajectories'].values():
+                for t in drug_trajs:
+                    all_vals.extend(t)
+        else:
+            baseline_trajs = baseline_data.get('trajectories', [])
+            for t in baseline_trajs:
+                all_vals.extend(t)
+                
+        if all_vals:
+            global_min = min(all_vals)
+            global_max = max(all_vals)
+            denom = global_max - global_min if global_max != global_min else 1.0
+            
+            # Map trajectories
+            learned_trajs = [[(v - global_min) / denom for v in t] for t in learned_trajs]
+            if random_trajs:
+                random_trajs = [[(v - global_min) / denom for v in t] for t in random_trajs]
+            
+            if has_all_drugs:
+                # Create a copy or update baseline_data['all_drug_trajectories']
+                baseline_data = dict(baseline_data)
+                baseline_data['all_drug_trajectories'] = {
+                    k: [[(v - global_min) / denom for v in t] for t in drug_trajs]
+                    for k, drug_trajs in baseline_data['all_drug_trajectories'].items()
+                }
+            else:
+                baseline_data = dict(baseline_data)
+                if 'trajectories' in baseline_data:
+                    baseline_data['trajectories'] = [[(v - global_min) / denom for v in t] for t in baseline_data['trajectories']]
+        
         # Compute max_len across all trajectory sources
         all_traj_lengths = [len(t) for t in learned_trajs]
         if random_trajs:
@@ -582,7 +630,7 @@ def plot_baseline_comparison(tab_id):
             ax.fill_between(timesteps, random_mean - random_std, random_mean + random_std, alpha=0.1, color='red')
         
         ax.set_xlabel('Timestep')
-        ax.set_ylabel('Population Fitness')
+        ax.set_ylabel('relative fitness')
         ax.set_title('Fitness Trajectory Comparison (Mean ± Std)')
         ax.legend(loc='best', fontsize=9)
         ax.grid(alpha=0.3)
@@ -789,10 +837,26 @@ def render_tab_content(tab_id):
              log_dir = "RL" if mode_arg in ["wf_ls", "wf_ss", "sswm"] else "sswm_dqn"
              path = project_root / "log" / log_dir
              policies = sorted([f.name for f in path.glob("*.pth")]) if path.exists() else []
+             
+             policy_choice = None
              if policies:
-                sim["selected_policy"] = st.selectbox("Select Policy", policies, key=f"policy_sel_{tab_id}")
+                 selected_from_list = st.selectbox("Select Policy", ["--- Custom Path ---"] + policies, key=f"policy_sel_{tab_id}")
+                 if selected_from_list != "--- Custom Path ---":
+                     policy_choice = selected_from_list
+                     
+             custom_policy_path = st.text_input(
+                 "Or enter Custom Policy Path",
+                 value=sim.get("selected_policy", "") if sim.get("selected_policy", "") not in policies else "",
+                 key=f"policy_custom_{tab_id}",
+                 help="Enter either a filename in the log directory, or a full absolute path to a .pth policy file."
+             )
+             
+             if custom_policy_path:
+                 sim["selected_policy"] = custom_policy_path
+             elif policy_choice:
+                 sim["selected_policy"] = policy_choice
              else:
-                st.warning("No policies found.")
+                 sim["selected_policy"] = ""
 
     with col_regime:
         st.subheader("Dataset & Regime")
@@ -834,6 +898,17 @@ def render_tab_content(tab_id):
             sim["hp"]["episode_steps"] = st.number_input("Episode Steps", 1, 1000, sim["hp"].get("episode_steps", 20), key=f"ep_steps_{tab_id}", help="Number of steps per episode")
             sim["hp"]["reward_scale"] = st.number_input("Reward Scale", 0.1, 10000.0, sim["hp"].get("reward_scale", 100.0), step=10.0, key=f"reward_scale_{tab_id}", help="Scale for rewards (recommended 100 for WF)")
             sim["hp"]["random_start"] = st.checkbox("Random Start", value=sim["hp"].get("random_start", True), key=f"rstart_{tab_id}", help="Start each episode from a random genotype instead of all-zeros")
+            sim["hp"]["stochastic"] = st.checkbox("Stochastic (Multinomial Sampling)", value=sim["hp"].get("stochastic", True), key=f"stochastic_{tab_id}", help="ON = Wright-Fisher with genetic drift (multinomial sampling). OFF = Fokker-Planck deterministic mode (faster, no drift noise).")
+            
+            if sim["hp"]["dataset"] == "Four-State":
+                sim["hp"]["landscape_amplification"] = st.number_input(
+                    "Landscape Amplification", 1.0, 50.0,
+                    sim["hp"].get("landscape_amplification", 1.0),
+                    step=1.0, key=f"amp_{tab_id}",
+                    help="Amplify fitness deviations from mean. 1.0 = raw values (~1%% selection). 10.0 = ~10%% selection pressure."
+                )
+            else:
+                sim["hp"]["landscape_amplification"] = 1.0
         else:
             st.info("No specific parameters for this regime.")
         

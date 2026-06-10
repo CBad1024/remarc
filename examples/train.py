@@ -177,7 +177,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
         v_num_drugs = len(define_chen_landscapes())
         v_N = 3
     elif v_dataset == "four_state":
-        v_num_drugs = len(define_four_state_landscapes())
+        amp = getattr(hp_args, 'landscape_amplification', 1.0) if hp_args else 1.0
+        v_num_drugs = len(define_four_state_landscapes(amplification=amp))
         v_N = 2
     else:
         v_num_drugs = 10  # synthetic default
@@ -209,7 +210,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             ent_coef=hp_args.ent_coef,
             episode_steps=hp_args.episode_steps,
             reward_scale=hp_args.reward_scale if hp_args else 100.0,
-            random_start=getattr(hp_args, 'random_start', True)
+            random_start=getattr(hp_args, 'random_start', True),
+            landscape_amplification=getattr(hp_args, 'landscape_amplification', 1.0),
+            stochastic=getattr(hp_args, 'stochastic', True)
         )
     else:
         # Even if no hp_args, we should ensure num_actions and state_shape are correct for the dataset
@@ -229,7 +232,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             ent_coef=p_base.ent_coef,
             episode_steps=p_base.episode_steps,
             reward_scale=p_base.reward_scale,
-            random_start=p_base.random_start
+            random_start=p_base.random_start,
+            landscape_amplification=p_base.landscape_amplification,
+            stochastic=p_base.stochastic
         )
 
     if train:
@@ -259,7 +264,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
         if v_dataset == "chen":
             ls = define_chen_landscapes()
         elif v_dataset == "four_state":
-            ls = define_four_state_landscapes()
+            amp = getattr(hp_args, 'landscape_amplification', 1.0) if hp_args else 1.0
+            ls = define_four_state_landscapes(amplification=amp)
         else: # synthetic
             ls = None # Handled by fallback logic below
         
@@ -275,7 +281,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
 
     # WF uses PPO, so we must load as PPO
     v_random_start = getattr(hp_args, 'random_start', True) if hp_args else True
-    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start)
+    v_stochastic = getattr(hp_args, 'stochastic', True) if hp_args else True
+    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start, stochastic=v_stochastic)
     best_policy = load_best_policy(p, filename=filename, env_type="wf", ppo=True)
     # Update env with WF specific parameters
     if hp_args:
@@ -300,8 +307,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
 
     # Evaluate random policy baseline
     random_results_df_plot = None
-    random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0)
-    random_results_df_plot = run_sim_tianshou(env=random_env, policy=load_random_policy(p), num_episodes=20, episode_length=episode_length)
+    random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic)
+    random_results_df_plot = run_sim_tianshou(env=random_env, policy=load_random_policy(p), num_episodes=num_episodes, episode_length=episode_length)
     
     if random_results_df_plot is not None:
         print("\nAverage Random WF fitness: ", np.mean(random_results_df_plot["Fitness"]))
@@ -332,21 +339,21 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             all_drug_episodes = {}  # drug_index -> list of episode trajectories
             for drug_idx, traj_df in enumerate(all_trajectories):
                 drug_episodes = []
-                for i in range(20):
+                for i in range(num_episodes):
                     episode_data = traj_df[traj_df['Episode'] == i]
                     drug_episodes.append(episode_data['Fitness'].tolist())
                 all_drug_episodes[drug_idx] = drug_episodes
             
             # Extract trajectories for learned policy
             learned_episodes = []
-            for i in range(20):
+            for i in range(num_episodes):
                 episode_data = results_df[results_df['Episode'] == i]
                 learned_episodes.append(episode_data['Fitness'].tolist())
 
             # Extract random policy trajectories
             random_episodes = []
             if random_results_df_plot is not None:
-                for i in range(20):
+                for i in range(num_episodes):
                     episode_data = random_results_df_plot[random_results_df_plot['Episode'] == i]
                     random_episodes.append(episode_data['Fitness'].tolist())
 
@@ -387,9 +394,35 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             print("\nGenerating performance plot...")
             plt.figure(figsize=(12, 7))
             
+            # Normalize fitness to relative fitness (0 to 1) across all policies
+            plot_results_df = results_df.copy()
+            plot_all_trajectories = [df.copy() for df in all_trajectories]
+            plot_random_results_df = random_results_df_plot.copy() if random_results_df_plot is not None else None
+            
+            all_fitness_series = []
+            if plot_results_df is not None:
+                all_fitness_series.append(plot_results_df['Fitness'])
+            for traj_df in plot_all_trajectories:
+                all_fitness_series.append(traj_df['Fitness'])
+            if plot_random_results_df is not None:
+                all_fitness_series.append(plot_random_results_df['Fitness'])
+                
+            if all_fitness_series:
+                import pandas as pd
+                combined = pd.concat(all_fitness_series)
+                global_min = combined.min()
+                global_max = combined.max()
+                denom = global_max - global_min if global_max != global_min else 1.0
+                
+                plot_results_df['Fitness'] = (plot_results_df['Fitness'] - global_min) / denom
+                for traj_df in plot_all_trajectories:
+                    traj_df['Fitness'] = (traj_df['Fitness'] - global_min) / denom
+                if plot_random_results_df is not None:
+                    plot_random_results_df['Fitness'] = (plot_random_results_df['Fitness'] - global_min) / denom
+            
             # Learned Policy
-            learned_mean = results_df.groupby('Time Step')['Fitness'].mean()
-            learned_std = results_df.groupby('Time Step')['Fitness'].std()
+            learned_mean = plot_results_df.groupby('Time Step')['Fitness'].mean()
+            learned_std = plot_results_df.groupby('Time Step')['Fitness'].std()
             
             plt.plot(learned_mean.index, learned_mean, label='Learned Policy', linewidth=2.5, color='blue')
             plt.fill_between(learned_mean.index, 
@@ -399,7 +432,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
 
             # All Single Drug Policies
             drug_colors = ['#e67e22', '#27ae60', '#8e44ad', '#c0392b', '#2980b9', '#f39c12', '#1abc9c', '#d35400', '#7f8c8d', '#2c3e50']
-            for drug_idx, traj_df in enumerate(all_trajectories):
+            for drug_idx, traj_df in enumerate(plot_all_trajectories):
                 color = drug_colors[drug_idx % len(drug_colors)]
                 drug_mean = traj_df.groupby('Time Step')['Fitness'].mean()
                 drug_std = traj_df.groupby('Time Step')['Fitness'].std()
@@ -417,9 +450,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                                  color=color, alpha=0.05)
 
             # Random Policy
-            if random_results_df_plot is not None:
-                random_mean = random_results_df_plot.groupby('Time Step')['Fitness'].mean()
-                random_std = random_results_df_plot.groupby('Time Step')['Fitness'].std()
+            if plot_random_results_df is not None:
+                random_mean = plot_random_results_df.groupby('Time Step')['Fitness'].mean()
+                random_std = plot_random_results_df.groupby('Time Step')['Fitness'].std()
                 plt.plot(random_mean.index, random_mean, label='Random Policy', linewidth=2, color='red', linestyle=':')
                 plt.fill_between(random_mean.index,
                                     random_mean - random_std,
@@ -427,7 +460,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                                     color='red', alpha=0.1)
 
             plt.xlabel('Time Step')
-            plt.ylabel('Population Fitness')
+            plt.ylabel('relative fitness')
             plt.title('Policy Performance Over Time (Wright-Fisher)')
             plt.legend(loc='best', fontsize=9)
             plt.grid(True, alpha=0.3)
@@ -489,6 +522,9 @@ if __name__ == "__main__":
     parser.add_argument("--episode-steps", type=int, default=20, help="Number of steps per episode (default: 20)")
     parser.add_argument("--random-start", action="store_true", default=True, help="Start episodes from random genotypes (default: True)")
     parser.add_argument("--no-random-start", action="store_false", dest="random_start", help="Start all episodes from genotype 000")
+    parser.add_argument("--landscape-amplification", type=float, default=1.0, help="Amplify fitness deviations in Four-State landscape (e.g. 10.0 for 10x selection pressure)")
+    parser.add_argument("--stochastic", action="store_true", default=True, help="Use stochastic Wright-Fisher with multinomial sampling (default: True)")
+    parser.add_argument("--no-stochastic", action="store_false", dest="stochastic", help="Use deterministic Fokker-Planck mode (no genetic drift)")
 
     parser.set_defaults(train=True)
 

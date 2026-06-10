@@ -102,23 +102,31 @@ def define_chen_landscapes(as_dict=False, center_at_zero=False):
         result = result - 1.0
     return result
 
-def define_four_state_landscapes(as_dict=False):
+def define_four_state_landscapes(as_dict=False, amplification=1.0):
     """
     Four-state fitness landscapes for 4 genotypes (N=2) and 4 drugs.
+    
+    Args:
+        as_dict: If True, return as dict with drug names as keys.
+        amplification: Scale fitness deviations from the mean. Values > 1.0
+            increase selection pressure (e.g. 10.0 turns ~1% differences
+            into ~10% differences). Default 1.0 = raw values.
     """
+    raw = np.array([
+        [0.993, 0.998, 1.009, 1.003],
+        [1.005, 0.988, 0.999, 1.001],
+        [0.997, 1.001, 0.989, 1.003],
+        [0.995, 1.005, 1.002, 0.999],
+    ])
+    
+    if amplification != 1.0:
+        mean = raw.mean()
+        raw = mean + (raw - mean) * amplification
+    
     if as_dict:
-        drugs = {}
-        drugs['Drug_A'] = [0.993, 0.998, 1.009, 1.003]
-        drugs['Drug_B'] = [1.005, 0.988, 0.999, 1.001]
-        drugs['Drug_C'] = [0.997, 1.001, 0.989, 1.003]
-        drugs['Drug_D'] = [0.995, 1.005, 1.002, 0.999]
-    else:
-        drugs = []
-        drugs.append([0.993, 0.998, 1.009, 1.003])
-        drugs.append([1.005, 0.988, 0.999, 1.001])
-        drugs.append([0.997, 1.001, 0.989, 1.003])
-        drugs.append([0.995, 1.005, 1.002, 0.999])
-    return np.array(drugs)
+        drug_names = ['Drug_A', 'Drug_B', 'Drug_C', 'Drug_D']
+        return {name: list(row) for name, row in zip(drug_names, raw)}
+    return raw
 
 def define_successful_landscapes():
     return np.array([[1.20506869, 3.35382954, 0.32273345, 0.29391833],

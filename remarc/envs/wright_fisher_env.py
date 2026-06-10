@@ -2,22 +2,69 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 import itertools
+import functools
 from tianshou.env import DummyVectorEnv
 from ..core.landscapes import Landscape
 
-class WrightFisherEnv(gym.Env):
 
-    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4, gen_per_step=500, total_generations=1000, num_drugs = 10, random_start=False, landscape_list=None, reward_scale=1.0):
+class WrightFisherEnv(gym.Env):
+    """Wright-Fisher evolutionary environment following the SHEPHERD formulation.
+
+    Population state is a frequency vector x ∈ ℝ^M on the (M-1)-simplex,
+    where M = 2^seq_length genotypes.
+
+    Per-generation update (Selection → Mutation → optional Drift):
+        1. Selection:  x_sel_i = f_i * x_i / f̄(x)
+        2. Mutation:   x_mut   = U @ x_sel      (U is column-stochastic)
+        3. Drift:      if stochastic, sample Multinomial(pop_size, x_mut)
+                       else x_{t+1} = x_mut     (Fokker-Planck / deterministic)
+
+    Parameters
+    ----------
+    pop_size : int
+        Population size N.  Only affects dynamics in stochastic mode.
+    seq_length : int
+        Number of bits per genotype.  M = 2^seq_length genotypes.
+    mutation_rate : float
+        Per-site per-generation mutation rate.  Total per-genotype rate
+        μ = mutation_rate * seq_length.  Each Hamming-1 neighbor receives
+        probability μ / seq_length = mutation_rate.
+    gen_per_step : int
+        Number of generations simulated per RL step.
+    total_generations : int
+        Total generations per episode.
+    num_drugs : int
+        Number of available drugs (actions).
+    random_start : bool
+        If True, start each episode at a random genotype.
+    landscape_list : list[Landscape] | None
+        Pre-built landscape objects.  If None, random landscapes are generated.
+    reward_scale : float
+        Multiplier for the reward signal.
+    stochastic : bool
+        If True, apply multinomial sampling (genetic drift) each generation.
+        If False, use deterministic frequency update (Fokker-Planck limit).
+    """
+
+    def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4,
+                 gen_per_step=500, total_generations=1000, num_drugs=10,
+                 random_start=False, landscape_list=None, reward_scale=1.0,
+                 stochastic=True):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
         self.seq_length = seq_length
         self.mutation_rate = mutation_rate
         self.random_start = random_start
-        self.switch_interval = gen_per_step # Use gen_per_step as the interval between actions
+        self.switch_interval = gen_per_step
         self.total_generations = total_generations
-        self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
+        self.stochastic = stochastic
         self.fit_trajectory = []
-    
+
+        # --- Genotype bookkeeping ---
+        self.num_genotypes = 2 ** self.seq_length
+        self.genotypes = [''.join(seq) for seq in itertools.product("01", repeat=self.seq_length)]
+
+        # --- Landscapes ---
         if landscape_list is not None:
             self.landscape_list = landscape_list
             self.num_drugs = len(landscape_list)
@@ -25,25 +72,56 @@ class WrightFisherEnv(gym.Env):
             self.num_drugs = num_drugs
             self.landscape_list = [Landscape(self.seq_length, sigma=0.5) for _ in range(self.num_drugs)]
 
-        self.drug_landscapes = np.array([land.ls for land in self.landscape_list])  # (drug, genotype)
+        self.drug_landscapes = np.array([land.ls for land in self.landscape_list])  # (num_drugs, M)
         self.concentrations = [0.1]
         self.num_concs = 1
 
-        # Action space: (drug, concentration) pairs (concentration is always 0.1, so just self.num_drugs)
+        # --- Spaces ---
         self.action_space = spaces.Discrete(self.num_drugs)
-    
-        # Observation space: genotype frequencies
-        self.observation_space = spaces.Box(low=0, high=1, shape=(len(self.genotypes),), dtype=np.float32)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.num_genotypes,), dtype=np.float32)
 
-        # State initialization
-        self.pop = {}
+        # --- Pre-compute mutation matrix U (column-stochastic, Hamming-1) ---
+        self.mutation_matrix = self._build_mutation_matrix()
+
+        # --- State ---
+        self.freqs = np.zeros(self.num_genotypes)
         self.current_drug = 0
         self.current_conc = 0
         self.generation = 0
-        
         self.reward_scale = reward_scale
-        
+
         self.reset()
+
+    # ------------------------------------------------------------------
+    # Mutation matrix construction
+    # ------------------------------------------------------------------
+
+    def _build_mutation_matrix(self):
+        """Build the column-stochastic mutation matrix U.
+
+        For N-bit genotypes with Hamming-1 connectivity:
+        - Each genotype i has exactly seq_length neighbors (one per bit flip)
+        - Each neighbor j gets U[j, i] = mutation_rate  (= μ / seq_length)
+        - Diagonal: U[i, i] = 1 - seq_length * mutation_rate  (= 1 - μ)
+
+        This makes each column sum to 1.
+        """
+        M = self.num_genotypes
+        N = self.seq_length
+        mu_per_neighbor = self.mutation_rate  # μ/N = mutation_rate (per-site rate)
+
+        U = np.zeros((M, M))
+        for i in range(M):
+            for bit in range(N):
+                j = i ^ (1 << bit)  # Hamming-1 neighbor
+                U[j, i] = mu_per_neighbor
+            U[i, i] = 1.0 - N * mu_per_neighbor
+
+        return U
+
+    # ------------------------------------------------------------------
+    # Reset
+    # ------------------------------------------------------------------
 
     def reset(self, seed=None, options=None):
         if len(self.fit_trajectory) == 0:
@@ -53,37 +131,103 @@ class WrightFisherEnv(gym.Env):
         self.fit_trajectory = []
         self.prev_step_fitness = None  # Track step-to-step changes
         super().reset(seed=seed)
+
+        self.freqs = np.zeros(self.num_genotypes)
         if self.random_start:
-            # Start at a random genotype
-            idx = np.random.randint(len(self.genotypes))
-            self.pop = {self.genotypes[idx]: self.pop_size}
+            idx = np.random.randint(self.num_genotypes)
+            self.freqs[idx] = 1.0
         else:
-            self.pop = {'0' * self.seq_length: self.pop_size}
+            self.freqs[0] = 1.0  # All mass on wildtype (00...0)
+
         self.generation = 0
         self.current_drug = 0
-        self.current_conc = 0 
+        self.current_conc = 0
         obs = self._get_obs()
         return obs, {}
 
+    # ------------------------------------------------------------------
+    # Observation
+    # ------------------------------------------------------------------
+
+    def _get_obs(self):
+        return self.freqs.astype(np.float32)
+
+    def get_obs(self):
+        """Public alias for _get_obs(); returns current genotype frequency vector."""
+        return self._get_obs()
+
+    # ------------------------------------------------------------------
+    # Fitness
+    # ------------------------------------------------------------------
+
     def avg_fitness(self):
-        fitness = self.get_fitness_map()
-        return sum((self.pop.get(g, 0) / self.pop_size) * fitness[g] for g in self.genotypes)
+        """Mean fitness under the current drug: f̄ = Σ f_i x_i."""
+        fitness_vec = self.drug_landscapes[self.current_drug]
+        return np.dot(fitness_vec, self.freqs)
 
     def get_fitness_map(self):
-        fitness = {geno: self.drug_landscapes[self.current_drug, i] for i, geno in enumerate(self.genotypes)}
+        """Return dict mapping genotype strings to fitness values (legacy compat)."""
+        fitness = {geno: self.drug_landscapes[self.current_drug, i]
+                   for i, geno in enumerate(self.genotypes)}
         return fitness
+
+    def get_fitness(self, raw=False):
+        """Mean fitness of current population under current drug."""
+        return np.dot(self.drug_landscapes[self.current_drug], self.freqs)
+
+    # ------------------------------------------------------------------
+    # Core evolution: Selection → Mutation → Drift
+    # ------------------------------------------------------------------
+
+    def time_step(self, fitness_vec):
+        """One generation of Wright-Fisher evolution (SHEPHERD formulation).
+
+        1. Selection:  x_sel_i = f_i · x_i / f̄(x)
+        2. Mutation:   x_mut   = U @ x_sel
+        3. Drift:      Multinomial(N, x_mut) / N   (if stochastic)
+                        or x_{t+1} = x_mut           (if deterministic)
+        """
+        # --- 1. Selection ---
+        f_bar = np.dot(fitness_vec, self.freqs)
+        if f_bar > 1e-12:
+            x_sel = (fitness_vec * self.freqs) / f_bar
+        else:
+            x_sel = self.freqs.copy()
+
+        # --- 2. Mutation ---
+        x_mut = self.mutation_matrix @ x_sel
+
+        # Clamp tiny negatives from floating-point and re-normalize
+        np.maximum(x_mut, 0.0, out=x_mut)
+        total = x_mut.sum()
+        if total > 1e-12:
+            x_mut /= total
+        else:
+            # Degenerate case: reset to uniform
+            x_mut[:] = 1.0 / self.num_genotypes
+
+        # --- 3. Genetic drift (optional) ---
+        if self.stochastic:
+            counts = np.random.multinomial(self.pop_size, x_mut)
+            self.freqs = counts.astype(np.float64) / self.pop_size
+        else:
+            self.freqs = x_mut
+
+    # ------------------------------------------------------------------
+    # Step
+    # ------------------------------------------------------------------
 
     def step(self, action):
         self.current_drug = action
         self.current_conc = 0
 
         if self.current_drug >= self.num_drugs:
-           raise ValueError(f"Current Drug {self.current_drug} is out of bounds for num_drugs {self.num_drugs}")
-        
-        fitness = {geno: self.drug_landscapes[self.current_drug, i] for i, geno in enumerate(self.genotypes)}
+            raise ValueError(f"Current Drug {self.current_drug} is out of bounds for num_drugs {self.num_drugs}")
+
+        fitness_vec = self.drug_landscapes[self.current_drug]
 
         for _ in range(self.switch_interval):
-            self.time_step(fitness)
+            self.time_step(fitness_vec)
             self.generation += 1
             if self.generation >= self.total_generations:
                 break
@@ -93,13 +237,9 @@ class WrightFisherEnv(gym.Env):
         self.fit_trajectory.append(avg_fit)
 
         # --- Reward: lower fitness = better drug efficacy ---
-        # Scale (1 - avg_fit) with a large multiplier so that ~1% fitness
-        # differences between drugs produce meaningful reward differences.
         reward = (1 - avg_fit) * self.reward_scale
 
         # Delta bonus: reward the agent for *reducing* fitness vs previous step.
-        # This creates temporal credit — choosing drugs that shift the population
-        # toward vulnerability matters, not just the instantaneous fitness.
         if self.prev_step_fitness is not None:
             delta = self.prev_step_fitness - avg_fit  # positive when fitness drops
             reward += delta * self.reward_scale * 0.5
@@ -116,131 +256,75 @@ class WrightFisherEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
-    def _get_obs(self):
-        freqs = np.array([self.pop.get(geno, 0) for geno in self.genotypes]) / self.pop_size
-        return freqs.astype(np.float32)
+    # ------------------------------------------------------------------
+    # Transition matrix (analytical)
+    # ------------------------------------------------------------------
 
-    def get_obs(self):
-        """Public alias for _get_obs(); returns current genotype frequency vector."""
-        return self._get_obs()
+    def get_transition_matrix(self, drug_index, conc_index=0):
+        """
+        Computes the expected one-generation transition matrix T.
 
-    def time_step(self, fitness):
-        self.mutation_step()
-        self.offspring_step(fitness)
+        T maps a frequency vector x to the expected post-selection+mutation
+        frequencies: x' = T(x) is NOT linear in x (because of the f̄ denominator),
+        but this method returns the mutation matrix weighted by fitness, which
+        gives the correct transition when applied column-wise to a pure state.
 
-    def mutation_step(self):
-        mutation_count = np.random.poisson(self.mutation_rate * self.pop_size * self.seq_length)
-        for _ in range(mutation_count):
-            haplotype = self.get_random_haplotype()
-            if self.pop[haplotype] > 1:
-                self.pop[haplotype] -= 1
-                mutant = self.get_mutant(haplotype)
-                self.pop[mutant] = self.pop.get(mutant, 0) + 1
+        T[i, j] = U[i, j] * f[j] / Σ_k U[k, j] * f[k]
+        """
+        M = self.num_genotypes
+        fitness = self.drug_landscapes[drug_index]
+        fitness = np.maximum(fitness, 0)
 
-    def get_random_haplotype(self):
-        haplotypes, frequencies = zip(*self.pop.items())
-        frequencies = np.array(frequencies) / self.pop_size
-        return np.random.choice(haplotypes, p=frequencies)
+        # Weight mutation matrix columns by fitness
+        T = self.mutation_matrix * fitness[np.newaxis, :]  # broadcast: T[i,j] = U[i,j] * f[j]
 
-    def get_mutant(self, haplotype):
-        site = np.random.randint(0, self.seq_length)
-        new_base = '1' if haplotype[site] == '0' else '0'
-        return haplotype[:site] + new_base + haplotype[site + 1:]
+        # Normalize each column
+        col_sums = T.sum(axis=0)
+        for j in range(M):
+            if col_sums[j] > 1e-9:
+                T[:, j] /= col_sums[j]
+            else:
+                T[:, j] = self.mutation_matrix[:, j] / self.mutation_matrix[:, j].sum()
 
-    def offspring_step(self, fitness):
-        haplotypes = list(self.pop.keys())
-        frequencies = np.array([self.pop[h] / self.pop_size for h in haplotypes])
-        fit_values = np.array([fitness[h] for h in haplotypes])
-        
-        # Ensure non-negative fitness for weights
-        fit_values = np.maximum(fit_values, 0)
-        np.nan_to_num(fit_values, copy=False, nan=0.0)
-        
-        weights = frequencies * fit_values
-        total_weight = weights.sum()
-        
-        if total_weight > 1e-9:
-            weights /= total_weight
-        else:
-            # Fallback to frequencies (neutral drift) if fitnesses are all 0/invalid
-            weights = frequencies
-            weights /= weights.sum()
+        return T
 
-        counts = np.random.multinomial(self.pop_size, weights)
-        self.pop.clear()
-        for haplotype, count in zip(haplotypes, counts):
-            if count > 0:
-                self.pop[haplotype] = count
+    # ------------------------------------------------------------------
+    # Factory methods
+    # ------------------------------------------------------------------
 
     @classmethod
-    def getEnv(cls, n_train, n_test, landscape_list = None, num_drugs = 10, gen_per_step=25, seq_length=4, random_start=False, episode_steps=20, reward_scale=1.0):
+    def getEnv(cls, n_train, n_test, landscape_list=None, num_drugs=10,
+               gen_per_step=25, seq_length=4, random_start=False,
+               episode_steps=20, reward_scale=1.0, stochastic=True):
         total_generations = gen_per_step * episode_steps
-        import functools
-        fn_train = functools.partial(_make_env_train, landscape_list, num_drugs, gen_per_step, seq_length, random_start, total_generations, reward_scale)
-        fn_test = functools.partial(_make_env_test, landscape_list, num_drugs, gen_per_step, seq_length, total_generations, reward_scale)
+        fn_train = functools.partial(
+            _make_env_train, landscape_list, num_drugs, gen_per_step,
+            seq_length, random_start, total_generations, reward_scale, stochastic)
+        fn_test = functools.partial(
+            _make_env_test, landscape_list, num_drugs, gen_per_step,
+            seq_length, total_generations, reward_scale, stochastic)
         train_envs = DummyVectorEnv([fn_train for _ in range(n_train)])
         test_envs = DummyVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
 
-    def get_fitness(self, raw=False):
-        frequencies = np.array(list(self.pop.values())) / self.pop_size
-        haplotypes = list(self.pop.keys())
-        state_vector = np.zeros(2**self.seq_length)
-        hap_inds = [int(hap, 2) for hap in haplotypes]
-        for i, hap in enumerate(hap_inds):
-            state_vector[hap] = frequencies[i]
 
-        fitness_vec = self.drug_landscapes[self.current_drug]
-        mean_fitness = np.dot(state_vector, fitness_vec)
+# --------------------------------------------------------------------------
+# Factory helpers (module-level for pickling compatibility)
+# --------------------------------------------------------------------------
 
-        # With raw (unnormalized) fitness values, mean_fitness is already
-        # on the original scale, so just return it directly.
-        return mean_fitness
-
-    def get_transition_matrix(self, drug_index, conc_index=0):
-        """
-        Computes the expected transition matrix T where T[i, j] is the 
-        expected frequency of genotype i in the next generation if the 
-        current population consists entirely of genotype j.
-        
-        T[i, j] = (m[i, j] * w[i]) / sum_k (m[k, j] * w[k])
-        where m is the mutation matrix and w is the fitness vector.
-        """
-        num_genotypes = 2**self.seq_length
-        fitness = self.drug_landscapes[drug_index]
-        
-        # Ensure non-negative fitness
-        fitness = np.maximum(fitness, 0)
-        
-        # 1. Construct Mutation Matrix M
-        # M[i, j] is prob of mutating from j to i
-        M = np.zeros((num_genotypes, num_genotypes))
-        for j in range(num_genotypes):
-            # Probability of no mutation
-            M[j, j] = 1 - (self.mutation_rate * self.seq_length)
-            # Probability of single mutations
-            for bit in range(self.seq_length):
-                i = j ^ (1 << bit)
-                M[i, j] = self.mutation_rate
-        
-        # 2. Coupled with Selection
-        # T[i, j] = M[i, j] * fitness[i] / normalized_by_column
-        T = np.zeros((num_genotypes, num_genotypes))
-        for j in range(num_genotypes):
-            col_weights = M[:, j] * fitness
-            total_w = np.sum(col_weights)
-            if total_w > 1e-9:
-                T[:, j] = col_weights / total_w
-            else:
-                # Neutral drift fallback
-                T[:, j] = M[:, j] / np.sum(M[:, j])
-                
-        return T
+def _make_env_train(landscape_list, num_drugs, gen_per_step, seq_length,
+                    random_start, total_generations, reward_scale, stochastic):
+    return WrightFisherEnv(
+        landscape_list=landscape_list, num_drugs=num_drugs,
+        gen_per_step=gen_per_step, seq_length=seq_length,
+        random_start=random_start, total_generations=total_generations,
+        reward_scale=reward_scale, stochastic=stochastic)
 
 
-def _make_env_train(landscape_list, num_drugs, gen_per_step, seq_length, random_start, total_generations, reward_scale):
-    return WrightFisherEnv(landscape_list=landscape_list, num_drugs=num_drugs, gen_per_step=gen_per_step, seq_length=seq_length, random_start=random_start, total_generations=total_generations, reward_scale=reward_scale)
-
-
-def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length, total_generations, reward_scale):
-    return WrightFisherEnv(landscape_list=landscape_list, num_drugs=num_drugs, gen_per_step=gen_per_step, seq_length=seq_length, random_start=False, total_generations=total_generations, reward_scale=reward_scale)
+def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
+                   total_generations, reward_scale, stochastic):
+    return WrightFisherEnv(
+        landscape_list=landscape_list, num_drugs=num_drugs,
+        gen_per_step=gen_per_step, seq_length=seq_length,
+        random_start=False, total_generations=total_generations,
+        reward_scale=reward_scale, stochastic=stochastic)

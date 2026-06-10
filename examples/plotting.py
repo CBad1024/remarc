@@ -306,32 +306,63 @@ def plot_four_state_simplex(
     )
 
     if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+        target_fig = fig if fig is not None else plt.gcf()
+        target_fig.savefig(save_path, dpi=300, bbox_inches="tight")
         print(f"Saved simplex plot to {save_path}")
 
     return fig
 
 
-def _load_ppo_policy_fn(policy_path, state_dim=4, n_actions=4):
-    """Load a trained PPO policy and return a callable for querying it."""
+def _load_ppo_policy_fn(policy_path, state_dim=4, n_actions=4, activation="relu"):
+    """Load a trained PPO policy and return a callable for querying it.
+
+    Reconstructs the same network architecture used in
+    ``remarc.agents.tianshou_agent.get_ppo_policy`` (Net[64,64] →
+    Actor[32] + Critic[32] → PPOPolicy) so we can load saved weights
+    without needing a live environment.
+    """
     import torch
+    from torch.optim import Adam
     from tianshou.data import Batch
+    from tianshou.utils.net.common import Net
+    from tianshou.utils.net.discrete import Actor, Critic
+    from tianshou.policy import PPOPolicy
+    from remarc.agents.tianshou_agent import get_activation
+    import gymnasium as gym
 
-    # Reconstruct network (must match training architecture)
-    from remarc.agents.tianshou_agent import build_ppo_agent
-    from remarc.core.hyperparameters import Presets
+    device = torch.device("cpu")
+    act_cls = get_activation(activation)
 
-    p = Presets(
+    net = Net(
         state_shape=(state_dim,),
-        num_actions=n_actions,
-        lr=1e-4, epochs=1, train_steps_per_epoch=1,
-        test_episodes=1, batch_size=8, buffer_size=50,
-        dataset="four_state",
+        hidden_sizes=[64, 64],
+        activation=act_cls,
+        device=device,
+    )
+    actor = Actor(
+        preprocess_net=net,
+        action_shape=n_actions,
+        hidden_sizes=[32],
+        device=device,
+    ).to(device)
+    critic = Critic(
+        preprocess_net=net,
+        hidden_sizes=[32],
+        device=device,
+    ).to(device)
+
+    optim = Adam(list(actor.parameters()) + list(critic.parameters()), lr=1e-4)
+
+    policy = PPOPolicy(
+        actor=actor,
+        critic=critic,
+        optim=optim,
+        dist_fn=torch.distributions.Categorical,
+        action_space=gym.spaces.Discrete(n_actions),
+        discount_factor=0.99,
+        deterministic_eval=True,
     )
 
-    # We need the policy object to load weights into
-    from remarc.agents.tianshou_agent import _build_ppo_policy
-    policy = _build_ppo_policy(p)
     policy.load_state_dict(torch.load(policy_path, map_location="cpu", weights_only=True))
     policy.eval()
 
