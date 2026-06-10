@@ -27,6 +27,7 @@ from remarc.envs import WrightFisherEnv, define_chen_landscapes, define_four_sta
 from remarc.core.hyperparameters import Presets
 from remarc.core.landscapes import Landscape
 from remarc.agents.tianshou_agent import load_best_policy, load_random_policy, train_wf_landscapes
+from remarc.agents.shepherd_eval import ShepherdMDP
 
 # Set up logging
 timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -101,7 +102,7 @@ def log_policy_snapshot(signature, policy, env):
     log_dir.mkdir(parents=True, exist_ok=True)
     filename = log_dir / f"{signature}_live.json"
     
-    n_states = 2**env.N
+    n_states = 2**env.seq_length
     state_tensor = torch.FloatTensor(np.identity(n_states))
     
     with torch.no_grad():
@@ -160,6 +161,43 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
             time_steps.append(j)
             episodes.append(i)
             
+            # Real-time trajectory logging
+            log_trajectory_step(signature, i, j, int(np.argmax(obs)), env.get_fitness(raw=True), int(action))
+
+    results_df = pd.DataFrame(
+        {"Episode": episodes, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+    return results_df
+
+def run_sim_shepherd(env, mdp_solver, num_episodes=10, episode_length=20, signature=None):
+    """
+    Simulates the environment using the SHEPHERD MDP exact solver policy.
+    """
+    states = []
+    actions = []
+    time_steps = []
+    episodes = []
+    fitnesses = []
+
+    for i in range(num_episodes):
+        env.reset()
+        obs = env.get_obs()
+
+        for j in range(episode_length):
+            states.append(obs)
+
+            # Convert one-hot observation back to a frequency vector on the simplex
+            x = np.zeros(mdp_solver.M)
+            x[np.argmax(obs)] = 1.0
+            
+            # Query the pre-solved MDP policy
+            action = mdp_solver.get_action(x)
+
+            obs, rew, terminated, truncated, info = env.step(action)
+            actions.append(int(action))
+            fitnesses.append(env.get_fitness(raw=True))
+            time_steps.append(j)
+            episodes.append(i)
+
             # Real-time trajectory logging
             log_trajectory_step(signature, i, j, int(np.argmax(obs)), env.get_fitness(raw=True), int(action))
 
@@ -313,6 +351,16 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     if random_results_df_plot is not None:
         print("\nAverage Random WF fitness: ", np.mean(random_results_df_plot["Fitness"]))
     
+    # Evaluate SHEPHERD baseline if computationally feasible (N <= 3)
+    shepherd_results_df_plot = None
+    if v_N <= 3:
+        print("\nEvaluating SHEPHERD MDP baseline...")
+        shepherd_mdp = ShepherdMDP.from_env(env, L=3, discount=0.99)
+        shepherd_mdp.solve()
+        shepherd_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic)
+        shepherd_results_df_plot = run_sim_shepherd(env=shepherd_env, mdp_solver=shepherd_mdp, num_episodes=num_episodes, episode_length=episode_length)
+        print("\nAverage SHEPHERD WF fitness: ", np.mean(shepherd_results_df_plot["Fitness"]))
+    
     # Evaluate best single-drug baseline (only if trained with signature)
     if signature:
         print("\nEvaluating best single-drug baseline...")
@@ -357,6 +405,14 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                     episode_data = random_results_df_plot[random_results_df_plot['Episode'] == i]
                     random_episodes.append(episode_data['Fitness'].tolist())
 
+            # Extract SHEPHERD policy trajectories
+            shepherd_episodes = None
+            if shepherd_results_df_plot is not None:
+                shepherd_episodes = []
+                for i in range(num_episodes):
+                    episode_data = shepherd_results_df_plot[shepherd_results_df_plot['Episode'] == i]
+                    shepherd_episodes.append(episode_data['Fitness'].tolist())
+
             # Save baseline, learned, and random results
             baseline_dir = os.path.join(project_root, "log", "baselines")
             os.makedirs(baseline_dir, exist_ok=True)
@@ -371,7 +427,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                     'all_drug_mean_fitness': {
                         str(k): float(np.mean([np.mean(ep) for ep in v]))
                         for k, v in all_drug_episodes.items()
-                    }
+                    },
+                    'shepherd_trajectories': shepherd_episodes
                 }, f)
             
             learned_file = os.path.join(baseline_dir, f"{signature}_learned.json")
@@ -398,6 +455,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             plot_results_df = results_df.copy()
             plot_all_trajectories = [df.copy() for df in all_trajectories]
             plot_random_results_df = random_results_df_plot.copy() if random_results_df_plot is not None else None
+            plot_shepherd_results_df = shepherd_results_df_plot.copy() if shepherd_results_df_plot is not None else None
             
             all_fitness_series = []
             if plot_results_df is not None:
@@ -406,6 +464,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                 all_fitness_series.append(traj_df['Fitness'])
             if plot_random_results_df is not None:
                 all_fitness_series.append(plot_random_results_df['Fitness'])
+            if plot_shepherd_results_df is not None:
+                all_fitness_series.append(plot_shepherd_results_df['Fitness'])
                 
             if all_fitness_series:
                 import pandas as pd
@@ -419,6 +479,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                     traj_df['Fitness'] = (traj_df['Fitness'] - global_min) / denom
                 if plot_random_results_df is not None:
                     plot_random_results_df['Fitness'] = (plot_random_results_df['Fitness'] - global_min) / denom
+                if plot_shepherd_results_df is not None:
+                    plot_shepherd_results_df['Fitness'] = (plot_shepherd_results_df['Fitness'] - global_min) / denom
             
             # Learned Policy
             learned_mean = plot_results_df.groupby('Time Step')['Fitness'].mean()
@@ -458,6 +520,16 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
                                     random_mean - random_std,
                                     random_mean + random_std,
                                     color='red', alpha=0.1)
+
+            # SHEPHERD Policy
+            if plot_shepherd_results_df is not None:
+                shepherd_mean = plot_shepherd_results_df.groupby('Time Step')['Fitness'].mean()
+                shepherd_std = plot_shepherd_results_df.groupby('Time Step')['Fitness'].std()
+                plt.plot(shepherd_mean.index, shepherd_mean, label='SHEPHERD Policy', linewidth=2, color='black', linestyle='-.')
+                plt.fill_between(shepherd_mean.index,
+                                    shepherd_mean - shepherd_std,
+                                    shepherd_mean + shepherd_std,
+                                    color='black', alpha=0.1)
 
             plt.xlabel('Time Step')
             plt.ylabel('relative fitness')
