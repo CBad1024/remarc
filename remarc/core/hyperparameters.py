@@ -19,6 +19,8 @@ class Presets:
     episode_steps: int = 20
     reward_scale: float = 100.0
     random_start: bool = True
+    landscape_amplification: float = 1.0
+    stochastic: bool = True
 
     @staticmethod
     def p1_ss():
