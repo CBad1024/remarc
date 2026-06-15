@@ -176,7 +176,7 @@ class WrightFisherEnv(gym.Env):
         return np.dot(self.drug_landscapes[self.current_drug], self.freqs)
 
     # ------------------------------------------------------------------
-    # Core evolution: Selection → Mutation → Drift
+    # Evolution: Selection → Mutation → Drift
     # ------------------------------------------------------------------
 
     def time_step(self, fitness_vec):

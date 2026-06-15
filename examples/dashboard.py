@@ -41,7 +41,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Constants
-NUM_TABS = 1
+NUM_TABS = 5
 MODES = {"Wright-Fisher Landscapes": "wf_ls"}
 
 
@@ -79,12 +79,26 @@ if "sims" not in st.session_state:
                 "reward_scale": 100.0,
                 "random_start": True,
                 "landscape_amplification": 1.0,
-                "stochastic": True
+                "stochastic": True,
+                "test_episodes": 100,
+                "test_episode_length": 100,
+                "plot_shepherd": True
             }
         }
 
 def start_simulation(tab_id):
     sim = st.session_state.sims[tab_id]
+    
+    # Auto-fix dataset mismatch for evaluation to prevent shape mismatch errors
+    if not sim["train"] and sim.get("signature"):
+        sig_lower = sim["signature"].lower()
+        if "fourstate" in sig_lower:
+            sim["hp"]["dataset"] = "Four-State"
+            sim["hp"]["n_mut"] = 2
+        elif "jun9" in sig_lower or "chen" in sig_lower:
+            sim["hp"]["dataset"] = "Chen et al."
+            sim["hp"]["n_mut"] = 3
+
     mode_arg = MODES[sim["mode"]]
     train_arg = "--train" if sim["train"] else "--no-train"
     
@@ -93,7 +107,7 @@ def start_simulation(tab_id):
     script_path = str(project_root / "examples" / "train.py")
     
     cmd = [
-        py_path, script_path, 
+        sys.executable, "examples/train.py",
         "--mode", mode_arg, 
         train_arg,
         "--lr", str(sim["hp"]["lr"]),
@@ -106,8 +120,15 @@ def start_simulation(tab_id):
         "--ent-coef", str(sim["hp"].get("ent_coef", 0.05)),
         "--episode-steps", str(sim["hp"].get("episode_steps", 20)),
         "--reward-scale", str(sim["hp"].get("reward_scale", 100.0)),
-        "--landscape-amplification", str(sim["hp"].get("landscape_amplification", 1.0))
+        "--landscape-amplification", str(sim["hp"].get("landscape_amplification", 1.0)),
+        "--test-episodes", str(sim["hp"].get("test_episodes", 100)),
+        "--test-episode-length", str(sim["hp"].get("test_episode_length", 100))
     ]
+
+    if not sim["hp"].get("plot_shepherd", True):
+        cmd.append("--no-shepherd")
+    else:
+        cmd += ["--shepherd-resolution", str(sim["hp"].get("shepherd_resolution", 3))]
 
     if sim["hp"].get("reward_clip", False):
         cmd += ["--reward-clip"]
@@ -132,6 +153,8 @@ def start_simulation(tab_id):
         cmd += ["--signature", sim["signature"]]
     elif not sim["train"] and sim.get("selected_policy"):
         cmd += ["--filename", sim["selected_policy"]]
+        if sim.get("signature"):
+            cmd += ["--signature", sim["signature"]]
     
 
     
@@ -210,6 +233,7 @@ def update_logs_for_sim(tab_id):
                 st.toast(f"✅ Simulation {tab_id+1} Successful!", icon="🎉")
             else:
                 st.toast(f"❌ Simulation {tab_id+1} Failed (Code: {exit_code})", icon="⚠️")
+            st.rerun()
     return changed
 
 def plot_landscape_heatmap(tab_id):
@@ -408,7 +432,7 @@ def plot_simplex_section(tab_id):
     from examples.plotting import plot_simplex_policy_slices, greedy_policy
     from remarc.envs.utils import define_four_state_landscapes
 
-    st.subheader("Simplex Policy Visualization")
+    st.subheader("Simplex Visualization: Greedy Policy")
     st.caption("3D simplex (x₀+x₁+x₂+x₃=1) sliced along x₃. Color shows which drug the policy selects at each population composition.")
 
     amp = sim["hp"].get("landscape_amplification", 1.0)
@@ -432,8 +456,16 @@ def plot_simplex_section(tab_id):
     # --- Trained policy (if available) ---
     signature = sim.get("signature")
     if signature:
-        policy_path = project_root / "log" / "policies" / f"best_policy_{signature}.pth"
+        mode_arg = MODES[sim["mode"]]
+        log_dir = "RL" if mode_arg in ["wf_ls", "wf_ss", "sswm"] else "sswm_dqn"
+        policy_path = project_root / "log" / log_dir / f"best_policy_{signature}.pth"
+        
+        # If the user selected a custom policy via absolute path, use it directly
+        if sim.get("selected_policy") and os.path.isabs(sim["selected_policy"]):
+            policy_path = Path(sim["selected_policy"])
+            
         if policy_path.exists():
+            st.subheader("Simplex Visualization: Trained RL Policy")
             try:
                 from examples.plotting import _load_ppo_policy_fn
                 trained_fn = _load_ppo_policy_fn(str(policy_path), state_dim=4, n_actions=len(landscapes))
@@ -447,6 +479,95 @@ def plot_simplex_section(tab_id):
                 )
                 st.pyplot(fig_trained)
                 plt.close(fig_trained)
+                
+                # --- SHEPHERD and Difference Plots ---
+                if sim["hp"].get("plot_shepherd", True):
+                    current_L = sim["hp"].get("shepherd_resolution", 3)
+                    if "shepherd_fn" not in sim or sim.get("shepherd_res_cache") != current_L:
+                        with st.spinner(f"Solving exact SHEPHERD MDP (L={current_L}) for visualization..."):
+                            from remarc.agents.shepherd_eval import ShepherdMDP
+                            from remarc.envs.wright_fisher_env import WrightFisherEnv
+                            from remarc.core.landscapes import Landscape
+                            g_min, g_max = np.min(landscapes), np.max(landscapes)
+                            landscape_objs = [Landscape(2, sigma=0.0, ls=ls, g_min=g_min, g_max=g_max) for ls in landscapes]
+                            
+                            dummy_env = WrightFisherEnv(
+                                pop_size=sim["hp"].get("pop_size", 10000),
+                                seq_length=2,
+                                mutation_rate=sim["hp"].get("mutation_rate", 1e-4),
+                                gen_per_step=sim["hp"].get("gen_per_step", 500),
+                                num_drugs=len(landscapes),
+                                landscape_list=landscape_objs
+                            )
+                            shepherd_mdp = ShepherdMDP.from_env(dummy_env, L=current_L, discount=0.99)
+                            shepherd_mdp.solve()
+                            
+                            def s_fn(state):
+                                return shepherd_mdp.get_action(state)
+                                
+                            sim["shepherd_fn"] = s_fn
+                            sim["shepherd_res_cache"] = current_L
+                    
+                    st.subheader("Simplex Visualization: SHEPHERD Baseline")
+                    fig_shepherd = plot_simplex_policy_slices(
+                        policy_fn=sim["shepherd_fn"],
+                        num_drugs=len(landscapes),
+                        drug_labels=["Drug A", "Drug B", "Drug C", "Drug D"],
+                        genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+                        resolution=50,
+                        title="SHEPHERD Policy (Exact MDP)",
+                    )
+                    st.pyplot(fig_shepherd)
+                    plt.close(fig_shepherd)
+                    
+                    from examples.plotting import plot_policy_difference_slices, plot_policy_magnitude_difference_slices
+                    
+                    st.subheader("Policy Difference: RL vs Greedy")
+                    fig_diff1 = plot_policy_difference_slices(
+                        policy_fn_1=trained_fn,
+                        policy_fn_2=greedy_fn,
+                        num_drugs=len(landscapes),
+                        resolution=50,
+                        title="Disagreement: RL vs Greedy",
+                    )
+                    st.pyplot(fig_diff1)
+                    plt.close(fig_diff1)
+                    
+                    st.subheader("Magnitude Difference: RL vs Greedy")
+                    fig_mag_diff1 = plot_policy_magnitude_difference_slices(
+                        policy_fn_1=trained_fn,
+                        policy_fn_2=greedy_fn,
+                        landscapes=landscapes,
+                        num_drugs=len(landscapes),
+                        resolution=50,
+                        title="Fitness Difference: RL vs Greedy",
+                    )
+                    st.pyplot(fig_mag_diff1)
+                    plt.close(fig_mag_diff1)
+                    
+                    st.subheader("Policy Difference: RL vs SHEPHERD")
+                    fig_diff2 = plot_policy_difference_slices(
+                        policy_fn_1=trained_fn,
+                        policy_fn_2=sim["shepherd_fn"],
+                        num_drugs=len(landscapes),
+                        resolution=50,
+                        title="Disagreement: RL vs SHEPHERD",
+                    )
+                    st.pyplot(fig_diff2)
+                    plt.close(fig_diff2)
+                    
+                    st.subheader("Magnitude Difference: RL vs SHEPHERD")
+                    fig_mag_diff2 = plot_policy_magnitude_difference_slices(
+                        policy_fn_1=trained_fn,
+                        policy_fn_2=sim["shepherd_fn"],
+                        landscapes=landscapes,
+                        num_drugs=len(landscapes),
+                        resolution=50,
+                        title="Fitness Difference: RL vs SHEPHERD",
+                    )
+                    st.pyplot(fig_mag_diff2)
+                    plt.close(fig_mag_diff2)
+
             except Exception as e:
                 st.warning(f"Could not load trained policy for simplex plot: {e}")
         else:
@@ -655,6 +776,57 @@ def plot_baseline_comparison(tab_id):
         
         st.caption("💡 Lower fitness indicates better drug efficacy. Learned policy should show lower fitness (more effective) than single-drug baselines.")
         
+        # Population Density Plot
+        if 'state_trajectories' in learned_data and learned_data['state_trajectories']:
+            from examples.plotting import plot_population_density_slices
+            st.subheader("Population Density (Learned Policy)")
+            try:
+                landscapes = sim.get("landscapes", [])
+                num_drugs = len(landscapes) if landscapes else 4
+                
+                trained_fn = None
+                signature = sim.get("signature")
+                
+                # Check for absolute policy path directly if signature is missing
+                policy_path = None
+                if sim.get("selected_policy") and os.path.isabs(sim["selected_policy"]):
+                    policy_path = Path(sim["selected_policy"])
+                elif signature:
+                    from examples.plotting import _load_ppo_policy_fn
+                    mode_arg = MODES[sim["mode"]]
+                    log_dir = "RL" if mode_arg in ["wf_ls", "wf_ss", "sswm"] else "sswm_dqn"
+                    policy_path = project_root / "log" / log_dir / f"best_policy_{signature}.pth"
+                
+                if policy_path and policy_path.exists():
+                    from examples.plotting import _load_ppo_policy_fn
+                    trained_fn = _load_ppo_policy_fn(str(policy_path), state_dim=4, n_actions=num_drugs)
+                else:
+                    st.warning(f"Policy file not found or signature missing. Signature: {signature}, Path: {policy_path}")
+                
+                greedy_fn = None
+                if len(landscapes) > 0:
+                    from examples.plotting import greedy_policy
+                    def g_fn(state):
+                        return greedy_policy(state, landscapes)
+                    greedy_fn = g_fn
+                
+                
+                fig_density = plot_population_density_slices(
+                    state_trajectories=learned_data['state_trajectories'],
+                    policy_fn=trained_fn,
+                    greedy_policy_fn=greedy_fn,
+                    num_drugs=num_drugs,
+                    resolution=50,
+                )
+                st.pyplot(fig_density)
+                plt.close(fig_density)
+                st.caption("Heatmap of population state frequency during evaluation episodes, binned by small triangles.")
+            except Exception as e:
+                import traceback
+                st.warning(f"Could not generate population density plot: {e}\n\n```python\n{traceback.format_exc()}\n```")
+        else:
+            st.info("Population density data not found in baseline JSON. Re-run evaluation to generate it.")
+            
     except Exception as e:
         st.error(f"Error loading baseline comparison: {e}")
 
@@ -773,8 +945,30 @@ st.title("🔬 REMARC Playground")
 st.markdown("Tinker with Evolutionary Dynamics and Reinforcement Learning right in your browser.")
 
 # UI Layout
-tab_labels = [f"Simulation {i+1}" for i in range(NUM_TABS)]
-tabs = st.tabs(tab_labels)
+def get_tab_label(tab_id):
+    sim = st.session_state.sims[tab_id]
+    label = f"Simulation {tab_id+1}"
+    if sim["running"]:
+        return f":orange[{label}]"
+    elif sim["exit_code"] is not None:
+        if sim["exit_code"] == 0:
+            return f":green[{label}]"
+        else:
+            return f":red[{label}]"
+    else:
+        return f":gray[{label}]"
+
+tab_labels = [get_tab_label(i) for i in range(NUM_TABS)]
+# Use st.radio styled as tabs to prevent Streamlit from losing the active tab state when labels change
+st.markdown("<style>.stRadio > div { flex-direction: row; }</style>", unsafe_allow_html=True)
+active_tab = st.radio(
+    "Select Simulation",
+    options=list(range(NUM_TABS)),
+    format_func=get_tab_label,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="active_sim_tab"
+)
 
 def render_tab_content(tab_id):
     sim = st.session_state.sims[tab_id]
@@ -856,7 +1050,12 @@ def render_tab_content(tab_id):
              
              policy_choice = None
              if policies:
-                 selected_from_list = st.selectbox("Select Policy", ["--- Custom Path ---"] + policies, key=f"policy_sel_{tab_id}")
+                 policy_options = ["--- Custom Path ---"] + policies
+                 default_idx = 0
+                 if sim.get("selected_policy") in policies:
+                     default_idx = policy_options.index(sim.get("selected_policy"))
+                 
+                 selected_from_list = st.selectbox("Select Policy", policy_options, index=default_idx, key=f"policy_sel_{tab_id}")
                  if selected_from_list != "--- Custom Path ---":
                      policy_choice = selected_from_list
                      
@@ -873,6 +1072,17 @@ def render_tab_content(tab_id):
                  sim["selected_policy"] = policy_choice
              else:
                  sim["selected_policy"] = ""
+
+             sim["signature"] = ""
+             if sim["selected_policy"]:
+                 import os
+                 fname = os.path.basename(sim["selected_policy"])
+                 if "sswm_" in fname:
+                     sim["signature"] = fname.split("sswm_")[-1].replace(".pth", "")
+                 elif "policy_" in fname:
+                     sim["signature"] = fname.split("policy_")[-1].replace(".pth", "")
+                 else:
+                     sim["signature"] = fname.replace(".pth", "")
 
     with col_regime:
         st.subheader("Dataset & Regime")
@@ -911,11 +1121,18 @@ def render_tab_content(tab_id):
             sim["hp"]["mutation_rate"] = st.number_input("Mutation Rate", 0.0, 1.0, sim["hp"]["mutation_rate"], format="%.1e", key=f"mut_{tab_id}")
             sim["hp"]["gen_per_step"] = st.number_input("Gens per Step", 1, 10000, sim["hp"]["gen_per_step"], key=f"gps_{tab_id}")
             sim["hp"]["ent_coef"] = st.number_input("Entropy Coef.", 0.0, 1.0, sim["hp"].get("ent_coef", 0.05), step=0.01, key=f"ent_{tab_id}", help="Higher = more exploration")
-            sim["hp"]["episode_steps"] = st.number_input("Episode Steps", 1, 1000, sim["hp"].get("episode_steps", 20), key=f"ep_steps_{tab_id}", help="Number of steps per episode")
+            sim["hp"]["episode_steps"] = st.number_input("Episode Steps", 1, 1000000, sim["hp"].get("episode_steps", 20), key=f"ep_steps_{tab_id}", help="Number of steps per episode")
             sim["hp"]["reward_scale"] = st.number_input("Reward Scale", 0.1, 10000.0, sim["hp"].get("reward_scale", 100.0), step=10.0, key=f"reward_scale_{tab_id}", help="Scale for rewards (recommended 100 for WF)")
             sim["hp"]["random_start"] = st.checkbox("Random Start", value=sim["hp"].get("random_start", True), key=f"rstart_{tab_id}", help="Start each episode from a random genotype instead of all-zeros")
             sim["hp"]["stochastic"] = st.checkbox("Stochastic (Multinomial Sampling)", value=sim["hp"].get("stochastic", True), key=f"stochastic_{tab_id}", help="ON = Wright-Fisher with genetic drift (multinomial sampling). OFF = Fokker-Planck deterministic mode (faster, no drift noise).")
             
+            st.markdown("##### Testing Parameters")
+            sim["hp"]["test_episodes"] = st.number_input("Test Episodes", 1, 10000, sim["hp"].get("test_episodes", 100), key=f"te_{tab_id}")
+            sim["hp"]["test_episode_length"] = st.number_input("Test Episode Length", 1, 10000, sim["hp"].get("test_episode_length", 100), key=f"tel_{tab_id}")
+            sim["hp"]["plot_shepherd"] = st.checkbox("Evaluate SHEPHERD Baseline (N<=3)", value=sim["hp"].get("plot_shepherd", True), key=f"shep_{tab_id}", help="Disable to save computation time")
+            if sim["hp"]["plot_shepherd"]:
+                sim["hp"]["shepherd_resolution"] = st.number_input("SHEPHERD Lattice Resolution (L)", min_value=2, max_value=20, value=sim["hp"].get("shepherd_resolution", 3), key=f"shep_res_{tab_id}", help="Number of grid points per axis in u-space. Default is 3.")
+
             if sim["hp"]["dataset"] == "Four-State":
                 sim["hp"]["landscape_amplification"] = st.number_input(
                     "Landscape Amplification", 1.0, 50.0,
@@ -937,9 +1154,8 @@ def render_tab_content(tab_id):
 
 
 
-for i, tab in enumerate(tabs):
-    with tab:
-        render_tab_content(i)
+# Render only the active tab's content
+render_tab_content(active_tab)
 
 st.divider()
 st.caption("REMARC - Reinforcement-learning based Evolutionary Markovian Resistance Control | support for concurrent executions")
