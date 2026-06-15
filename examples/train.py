@@ -226,8 +226,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     v_num_actions = v_num_drugs
 
     ##SET HOW MANY EPISODES TO RUN & HOW LONG FOR TESTING
-    num_episodes = 100
-    episode_length = 100
+    num_episodes = getattr(hp_args, 'test_episodes', 100) if hp_args else 100
+    episode_length = getattr(hp_args, 'test_episode_length', 100) if hp_args else 100
     v_sigma = hp_args.sigma if hp_args else 0.5
 
     p = p_base
@@ -290,7 +290,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     active_landscapes = None
     if signature:
         pickle_dir = os.path.join(project_root, "log", "RL")
-        pickle_file = "active_landscapes.pkl"
+        pickle_file = f"active_landscapes_{signature}.pkl"
         pickle_path = os.path.join(pickle_dir, pickle_file)
         if os.path.exists(pickle_path):
             print(f"Loading shared landscapes from {pickle_path} for consistent evaluation.")
@@ -353,9 +353,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     
     # Evaluate SHEPHERD baseline if computationally feasible (N <= 3)
     shepherd_results_df_plot = None
-    if v_N <= 3:
+    if v_N <= 3 and not (hp_args and getattr(hp_args, 'no_shepherd', False)):
         print("\nEvaluating SHEPHERD MDP baseline...")
-        shepherd_mdp = ShepherdMDP.from_env(env, L=3, discount=0.99)
+        shepherd_mdp = ShepherdMDP.from_env(env, L=getattr(hp_args, 'shepherd_resolution', 3), discount=0.99)
         shepherd_mdp.solve()
         shepherd_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic)
         shepherd_results_df_plot = run_sim_shepherd(env=shepherd_env, mdp_solver=shepherd_mdp, num_episodes=num_episodes, episode_length=episode_length)
@@ -394,9 +394,11 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             
             # Extract trajectories for learned policy
             learned_episodes = []
+            learned_states = []
             for i in range(num_episodes):
                 episode_data = results_df[results_df['Episode'] == i]
                 learned_episodes.append(episode_data['Fitness'].tolist())
+                learned_states.append([s.tolist() for s in episode_data['State']])
 
             # Extract random policy trajectories
             random_episodes = []
@@ -435,7 +437,8 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             with open(learned_file, 'w') as f:
                 json.dump({
                     'mean_fitness': float(np.mean([np.mean(ep) for ep in learned_episodes])),
-                    'trajectories': learned_episodes
+                    'trajectories': learned_episodes,
+                    'state_trajectories': learned_states
                 }, f)
             
             random_file = os.path.join(baseline_dir, f"{signature}_random.json")
@@ -572,6 +575,8 @@ def main_wf_landscapes(train, signature: str | None = None, filename: str | None
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="REMARC Runner")
     parser.add_argument("--mode", type=str, choices=["wf_ls"], default="wf_ls")
+    parser.add_argument('--no-shepherd', action='store_true', help='Skip SHEPHERD baseline evaluation')
+    parser.add_argument('--shepherd-resolution', type=int, default=3, help='Lattice resolution L for SHEPHERD exact MDP solver')
     parser.add_argument("--train", action="store_true", help="Train before evaluation")
     parser.add_argument("--no-train", action="store_false", dest="train", help="Skip training (only evaluation)")
     parser.add_argument("--signature", type=str, default=None, help="Signature to append to the policy filename during training")
@@ -597,6 +602,8 @@ if __name__ == "__main__":
     parser.add_argument("--landscape-amplification", type=float, default=1.0, help="Amplify fitness deviations in Four-State landscape (e.g. 10.0 for 10x selection pressure)")
     parser.add_argument("--stochastic", action="store_true", default=True, help="Use stochastic Wright-Fisher with multinomial sampling (default: True)")
     parser.add_argument("--no-stochastic", action="store_false", dest="stochastic", help="Use deterministic Fokker-Planck mode (no genetic drift)")
+    parser.add_argument("--test-episodes", type=int, default=100, help="Number of episodes to run for testing")
+    parser.add_argument("--test-episode-length", type=int, default=100, help="Length of each testing episode")
 
     parser.set_defaults(train=True)
 

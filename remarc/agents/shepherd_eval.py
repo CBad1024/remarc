@@ -18,10 +18,6 @@ The Fokker-Planck equation in u-space has:
 These are discretized on an L^d grid to form a CTMC generator Ω, then
 exponentiated W = exp(Ω · dt) to get a row-stochastic MDP transition matrix.
 
-Reference
----------
-Nichol et al., "Steering Evolution with Sequential Therapy to Prevent the
-Emergence of Bacterial Antibiotic Resistance" (PLoS Comput. Biol., 2015).
 """
 
 import mdptoolbox.mdp as mdp
@@ -271,7 +267,15 @@ class ShepherdMDP:
         W : sparse CSR matrix
             Row-stochastic transition probability matrix.
         """
-        W = sparse_expm(Omega * self.dt)
+        # Convert to CSC format for efficient expm computation
+        Omega = Omega.tocsc()
+        
+        import warnings
+        from scipy.sparse import SparseEfficiencyWarning
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SparseEfficiencyWarning)
+            W = sparse_expm(Omega * self.dt)
         W = W.tocsr()
 
         # Clip tiny negative entries from expm numerical noise
@@ -341,8 +345,15 @@ class ShepherdMDP:
             Value function.
         """
         P, R = self.build_W_and_R()
-        vi = mdp.ValueIteration(P, R, discount=self.discount, max_iter=max_iter)
-        vi.run()
+        
+        import warnings
+        from scipy.sparse import SparseEfficiencyWarning
+        
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SparseEfficiencyWarning)
+            vi = mdp.ValueIteration(P, R, discount=self.discount, max_iter=max_iter)
+            vi.run()
+            
         self.policy = np.array(vi.policy)
         self.value = np.array(vi.V)
         return self.policy, self.value

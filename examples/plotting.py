@@ -9,10 +9,12 @@ Includes:
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib as mpl
 from matplotlib.tri import Triangulation
 from matplotlib.patches import Patch, FancyArrowPatch
 from matplotlib.collections import PolyCollection
 
+from remarc.envs.wright_fisher_env import WrightFisherEnv
 
 # ──────────────────────────────────────────────────────────────────────
 #  Simplex Policy Visualization (Four-State System)
@@ -254,6 +256,228 @@ def plot_simplex_policy_slices(
     return fig
 
 
+def plot_policy_difference_slices(
+    policy_fn_1,
+    policy_fn_2,
+    num_drugs=4,
+    resolution=60,
+    x3_slices=None,
+    genotype_labels=None,
+    title="Policy Difference",
+    figsize=None,
+):
+    """
+    Visualize regions of agreement vs disagreement between two policies.
+    Green = policies select the SAME drug
+    Red = policies select DIFFERENT drugs
+    """
+    if genotype_labels is None:
+        genotype_labels = [f"genotype {i}" for i in range(4)]
+    if x3_slices is None:
+        x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+
+    n_slices = len(x3_slices)
+    if figsize is None:
+        figsize = (2.6 * n_slices + 1.5, 3.8)
+
+    fig, ax_array = plt.subplots(1, n_slices, figsize=figsize)
+    if n_slices == 1:
+        ax_array = [ax_array]
+
+    bary, x_cart, y_cart, tri_idx = _make_simplex_grid(resolution)
+    
+    # Custom colormap for difference (0 = different = Red, 1 = same = Green)
+    cmap = mcolors.ListedColormap(["#e74c3c", "#2ecc71"]) 
+    bounds = [-0.5, 0.5, 1.5]
+    norm = mcolors.BoundaryNorm(bounds, cmap.N)
+
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        ax = ax_array[s_idx]
+        x3_mid = (x3_lo + x3_hi) / 2.0
+        S = 1.0 - x3_mid
+
+        # query policies at every grid point
+        actions_1 = np.zeros(len(bary), dtype=int)
+        actions_2 = np.zeros(len(bary), dtype=int)
+        for p_idx in range(len(bary)):
+            l0, l1, l2 = bary[p_idx]
+            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            actions_1[p_idx] = policy_fn_1(state)
+            actions_2[p_idx] = policy_fn_2(state)
+
+        # color each triangle by agreement
+        tri_agreements = np.zeros(len(tri_idx), dtype=int)
+        for t_idx, (v0, v1, v2) in enumerate(tri_idx):
+            a1_votes = [actions_1[v0], actions_1[v1], actions_1[v2]]
+            a2_votes = [actions_2[v0], actions_2[v1], actions_2[v2]]
+            # If majority vote matches, it's an agreement
+            tri_a1 = max(set(a1_votes), key=a1_votes.count)
+            tri_a2 = max(set(a2_votes), key=a2_votes.count)
+            tri_agreements[t_idx] = 1 if tri_a1 == tri_a2 else 0
+
+        verts = np.column_stack([x_cart, y_cart])
+        tri_verts = verts[tri_idx]
+        colors_rgba = [cmap(norm(a)) for a in tri_agreements]
+
+        pc = PolyCollection(tri_verts, facecolors=colors_rgba, edgecolors="none", linewidths=0)
+        ax.add_collection(pc)
+
+        outline_x = [0, 1, 0.5, 0]
+        outline_y = [0, 0, _SQRT3_2, 0]
+        ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
+
+        ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]", ha="center", va="top", fontsize=8, transform=ax.transAxes)
+
+        if s_idx == 0:
+            ax.text(-0.04, -0.06, genotype_labels[0], ha="center", fontsize=7, style="italic")
+            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3], ha="center", fontsize=7, style="italic")
+        if s_idx == n_slices - 1:
+            ax.text(1.04, -0.06, genotype_labels[1], ha="center", fontsize=7, style="italic")
+            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
+
+        ax.set_xlim(-0.08, 1.08)
+        ax.set_ylim(-0.15, _SQRT3_2 + 0.15)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
+    fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
+    fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
+
+    legend_elements = [
+        Patch(facecolor="#2ecc71", edgecolor="gray", linewidth=0.5, label="Agreement"),
+        Patch(facecolor="#e74c3c", edgecolor="gray", linewidth=0.5, label="Disagreement")
+    ]
+    fig.legend(handles=legend_elements, loc="center right", bbox_to_anchor=(0.98, 0.55), fontsize=9, framealpha=0.9, edgecolor="lightgray")
+    fig.suptitle(title, fontsize=12, y=0.97)
+    fig.subplots_adjust(wspace=0.02, left=0.03, right=0.87, bottom=0.12, top=0.90)
+
+    return fig
+
+
+
+def plot_policy_magnitude_difference_slices(
+    policy_fn_1,
+    policy_fn_2,
+    landscapes,
+    num_drugs=4,
+    resolution=60,
+    x3_slices=None,
+    genotype_labels=None,
+    title="Policy Magnitude Difference",
+    figsize=None,
+):
+    """
+    Visualize magnitude of disagreement between two policies.
+    Intensity of red represents magnitude of difference in fitness between the population under each drug.
+    """
+    if genotype_labels is None:
+        genotype_labels = [f"genotype {i}" for i in range(4)]
+    if x3_slices is None:
+        x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+
+    n_slices = len(x3_slices)
+    if figsize is None:
+        figsize = (2.6 * n_slices + 1.5, 3.8)
+
+    fig, ax_array = plt.subplots(1, n_slices, figsize=figsize)
+    if n_slices == 1:
+        ax_array = [ax_array]
+
+    bary, x_cart, y_cart, tri_idx = _make_simplex_grid(resolution)
+    
+    # Pre-calculate all differences to find the global max for the colormap
+    slice_diffs = []
+    
+    # Calculate normalization denominator to match trajectory plots
+    g_min = np.min(landscapes)
+    g_max = np.max(landscapes)
+    denom = (g_max - g_min) if g_max != g_min else 1.0
+
+    for x3_lo, x3_hi in x3_slices:
+        x3_mid = (x3_lo + x3_hi) / 2.0
+        S = 1.0 - x3_mid
+
+        actions_1 = np.zeros(len(bary), dtype=int)
+        actions_2 = np.zeros(len(bary), dtype=int)
+        for p_idx in range(len(bary)):
+            l0, l1, l2 = bary[p_idx]
+            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            actions_1[p_idx] = policy_fn_1(state)
+            actions_2[p_idx] = policy_fn_2(state)
+
+        tri_diffs = np.zeros(len(tri_idx), dtype=float)
+        for t_idx, (v0, v1, v2) in enumerate(tri_idx):
+            a1_votes = [actions_1[v0], actions_1[v1], actions_1[v2]]
+            a2_votes = [actions_2[v0], actions_2[v1], actions_2[v2]]
+            tri_a1 = max(set(a1_votes), key=a1_votes.count)
+            tri_a2 = max(set(a2_votes), key=a2_votes.count)
+            
+            if tri_a1 != tri_a2:
+                # Approximate state at the triangle's centroid
+                cb = (bary[v0] + bary[v1] + bary[v2]) / 3.0
+                state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
+                fitness_1 = np.dot(landscapes[tri_a1], state)
+                fitness_2 = np.dot(landscapes[tri_a2], state)
+                # Normalize difference by the landscape range
+                tri_diffs[t_idx] = abs(fitness_1 - fitness_2) / denom
+            else:
+                tri_diffs[t_idx] = 0.0
+        slice_diffs.append(tri_diffs)
+
+    global_max = max([np.max(diffs) for diffs in slice_diffs]) if slice_diffs else 0.0
+    if global_max <= 1e-6:
+        global_max = 0.1 # fallback if policies are identical
+
+    # Colormap for magnitude difference (White/Yellow -> Red)
+    cmap = mpl.colormaps["YlOrRd"] 
+    norm = mcolors.Normalize(vmin=0.0, vmax=global_max)
+
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        ax = ax_array[s_idx]
+        x3_mid = (x3_lo + x3_hi) / 2.0
+        tri_diffs = slice_diffs[s_idx]
+
+        verts = np.column_stack([x_cart, y_cart])
+        tri_verts = verts[tri_idx]
+        colors_rgba = [cmap(norm(a)) for a in tri_diffs]
+
+        pc = PolyCollection(tri_verts, facecolors=colors_rgba, edgecolors="none", linewidths=0)
+        ax.add_collection(pc)
+
+        outline_x = [0, 1, 0.5, 0]
+        outline_y = [0, 0, _SQRT3_2, 0]
+        ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
+
+        ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]", ha="center", va="top", fontsize=8, transform=ax.transAxes)
+
+        if s_idx == 0:
+            ax.text(-0.04, -0.06, genotype_labels[0], ha="center", fontsize=7, style="italic")
+            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3], ha="center", fontsize=7, style="italic")
+        if s_idx == n_slices - 1:
+            ax.text(1.04, -0.06, genotype_labels[1], ha="center", fontsize=7, style="italic")
+            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
+
+        ax.set_xlim(-0.08, 1.08)
+        ax.set_ylim(-0.15, _SQRT3_2 + 0.15)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
+    fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
+    fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
+
+    # ── colorbar instead of legend ──
+    cbar_ax = fig.add_axes([0.90, 0.25, 0.015, 0.5])
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, cax=cbar_ax, label="Fitness Difference")
+    fig.suptitle(title, fontsize=12, y=0.97)
+    fig.subplots_adjust(wspace=0.02, left=0.03, right=0.87, bottom=0.12, top=0.90)
+
+    return fig
+
+
 def plot_four_state_simplex(
     landscapes=None,
     policy_fn=None,
@@ -361,6 +585,7 @@ def _load_ppo_policy_fn(policy_path, state_dim=4, n_actions=4, activation="relu"
         action_space=gym.spaces.Discrete(n_actions),
         discount_factor=0.99,
         deterministic_eval=True,
+        action_scaling=False,
     )
 
     policy.load_state_dict(torch.load(policy_path, map_location="cpu", weights_only=True))
@@ -410,6 +635,153 @@ def plot_frequency_heatmaps(frequencies_at_times, time_steps, filename="wf_frequ
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     print(f"Heatmap plot saved to {filename}")
     plt.close()
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Population Density Visualization
+# ──────────────────────────────────────────────────────────────────────
+
+def plot_population_density_slices(
+    state_trajectories,
+    policy_fn=None,
+    greedy_policy_fn=None,
+    num_drugs=4,
+    resolution=60,
+    x3_slices=None,
+    figsize=None,
+):
+    """
+    Plot the population density from trajectories as a heatmap on the 2-simplex slices.
+    """
+    if x3_slices is None:
+        x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+
+    n_slices = len(x3_slices)
+    if figsize is None:
+        figsize = (2.6 * n_slices + 1.5, 3.8)
+
+    fig, ax_array = plt.subplots(1, n_slices, figsize=figsize)
+    if n_slices == 1:
+        ax_array = [ax_array]
+
+    bary, x_cart, y_cart, tri_idx = _make_simplex_grid(resolution)
+    
+    # Flatten all states from all episodes into a single array
+    all_states = []
+    for episode in state_trajectories:
+        all_states.extend(episode)
+    all_states = np.array(all_states) # Shape: (N, 4)
+    
+    # Build a Triangulation and TriFinder to map Cartesian points to triangles
+    triangulation = Triangulation(x_cart, y_cart, tri_idx)
+    trifinder = triangulation.get_trifinder()
+
+    # Pre-calculate counts to find global max for the colormap
+    slice_counts = []
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        # Filter states by x3 slice
+        if s_idx == 0:
+            mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] <= x3_hi)
+        else:
+            mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] < x3_hi)
+        
+        states_in_slice = all_states[mask]
+        counts = np.zeros(len(tri_idx), dtype=float)
+        
+        if len(states_in_slice) > 0:
+            x3_mid = (x3_lo + x3_hi) / 2.0
+            S = 1.0 - x3_mid
+            
+            if S > 0:
+                l0 = states_in_slice[:, 0] / S
+                l1 = states_in_slice[:, 1] / S
+                l2 = states_in_slice[:, 2] / S
+                
+                # Normalize just in case of float precision issues
+                tot = l0 + l1 + l2
+                tot[tot == 0] = 1.0
+                l0 /= tot
+                l1 /= tot
+                l2 /= tot
+                
+                cx, cy = _bary_to_cart(l0, l1, l2)
+                found_tri_indices = trifinder(cx, cy)
+                
+                valid_idx = found_tri_indices[found_tri_indices != -1]
+                for tidx in valid_idx:
+                    counts[tidx] += 1.0
+                    
+        slice_counts.append(counts)
+
+    total_states = len(all_states) if len(all_states) > 0 else 1.0
+    global_max = max([np.max(c) for c in slice_counts]) / total_states if slice_counts else 0.0
+    
+    vmin = 1e-4
+    if global_max <= vmin:
+        global_max = vmin * 10.0
+
+    cmap = mpl.colormaps["viridis"]
+    norm = mcolors.LogNorm(vmin=vmin, vmax=global_max)
+
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        ax = ax_array[s_idx]
+        counts = slice_counts[s_idx] / total_states
+        
+        # Clip to vmin to avoid log(0) issues and map zeros to the bottom of the colormap
+        counts = np.clip(counts, a_min=vmin, a_max=None)
+
+        verts = np.column_stack([x_cart, y_cart])
+        tri_verts = verts[tri_idx]
+        colors_rgba = [cmap(norm(c)) for c in counts]
+
+        pc = PolyCollection(tri_verts, facecolors=colors_rgba, edgecolors="none", linewidths=0)
+        ax.add_collection(pc)
+
+        if policy_fn is not None or greedy_policy_fn is not None:
+            actions = np.zeros(len(bary), dtype=int)
+            greedy_actions = np.zeros(len(bary), dtype=int)
+            x3_mid = (x3_lo + x3_hi) / 2.0
+            S = 1.0 - x3_mid
+            for p_idx in range(len(bary)):
+                l0, l1, l2 = bary[p_idx]
+                state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+                if policy_fn is not None:
+                    actions[p_idx] = policy_fn(state)
+                if greedy_policy_fn is not None:
+                    greedy_actions[p_idx] = greedy_policy_fn(state)
+            
+            levels = np.arange(0.5, num_drugs, 1.0)
+            
+            if greedy_policy_fn is not None:
+                ax.tricontour(triangulation, greedy_actions, levels=levels, colors='white', linewidths=1.5, linestyles=':', zorder=9)
+                
+            if policy_fn is not None:
+                # Draw boundary lines where policy changes actions
+                ax.tricontour(triangulation, actions, levels=levels, colors='red', linewidths=1.5, linestyles='--', zorder=10)
+                # Debug: Add the unique actions found to the title
+                unique_a = np.unique(actions)
+                ax.set_title(f"Genotype 3\n[{x3_lo:.1f}, {x3_hi:.1f})\nActs: {unique_a}", fontsize=8)
+            else:
+                unique_a = np.unique(greedy_actions)
+                ax.set_title(f"Genotype 3\n[{x3_lo:.1f}, {x3_hi:.1f})\nGreedy Acts: {unique_a}", fontsize=8)
+        else:
+            ax.set_title(f"Genotype 3\n[{x3_lo:.1f}, {x3_hi:.1f})", fontsize=10)
+
+        outline_x = [0, 1, 0.5, 0]
+        outline_y = [0, 0, _SQRT3_2, 0]
+        ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
+
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.25, 0.02, 0.5])
+    
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, cax=cbar_ax, label="Relative Density (Log Scale)")
+
+    return fig
 
 
 # ──────────────────────────────────────────────────────────────────────
