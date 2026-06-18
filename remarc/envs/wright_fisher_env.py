@@ -308,6 +308,23 @@ class WrightFisherEnv(gym.Env):
         return train_envs, test_envs
 
 
+
+
+class ThreeGenotypeEnv(WrightFisherEnv):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_genotypes = 3
+    
+    def _build_mutation_matrix(self):
+        mu = self.mutation_rate
+        return np.array([
+            [1 - mu, mu, mu],
+            [mu, 1 - mu, mu],
+            [mu, mu, 1 - mu],
+        ])
+
+
+
 # --------------------------------------------------------------------------
 # Factory helpers (module-level for pickling compatibility)
 # --------------------------------------------------------------------------
@@ -328,3 +345,7 @@ def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=False, total_generations=total_generations,
         reward_scale=reward_scale, stochastic=stochastic)
+
+
+
+

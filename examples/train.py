@@ -86,7 +86,6 @@ def log_trajectory_step(signature, episode, step, genotype, fitness, drug):
     log_dir.mkdir(parents=True, exist_ok=True)
     filename = log_dir / f"{signature}_live.csv"
     
-    # Write header if file doesn't exist
     if not filename.exists():
         with open(filename, "w") as f:
             f.write("episode,step,genotype,fitness,drug\n")
@@ -104,6 +103,16 @@ def log_policy_snapshot(signature, policy, env):
     
     n_states = 2**env.seq_length
     state_tensor = torch.FloatTensor(np.identity(n_states))
+    
+    # Move state tensor to whatever device the policy is on
+    if hasattr(policy, "actor"):
+        device = next(policy.actor.parameters()).device
+    elif hasattr(policy, "model"):
+        device = next(policy.model.parameters()).device
+    else:
+        device = torch.device("cpu")
+    
+    state_tensor = state_tensor.to(device)
     
     with torch.no_grad():
         if hasattr(policy, "model"): # DQN
@@ -145,24 +154,43 @@ def run_sim_tianshou(env, policy: BasePolicy, num_episodes=10, episode_length=20
     episodes = []
     fitnesses = []
 
-    for i in range(num_episodes):
-        env.reset()
-        obs = env.get_obs()
+    log_file = None
+    if signature:
+        log_dir = project_root / "log" / "trajectories"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        filename = log_dir / f"{signature}_live.csv"
+        log_file = open(filename, "w")
+        log_file.write("episode,step,genotype,fitness,drug\n")
 
-        for j in range(episode_length):
-            states.append(obs)
+    if hasattr(policy, "eval"):
+        policy.eval()
 
-            batch = Batch(obs=[obs], info=Batch())
-            action = int(policy(batch).act[0])
+    with torch.no_grad():
+        for i in range(num_episodes):
+            env.reset()
+            obs = env.get_obs()
 
-            obs, rew, terminated, truncated, info = env.step(action)
-            actions.append(int(action))
-            fitnesses.append(env.get_fitness(raw=True))
-            time_steps.append(j)
-            episodes.append(i)
-            
-            # Real-time trajectory logging
-            log_trajectory_step(signature, i, j, int(np.argmax(obs)), env.get_fitness(raw=True), int(action))
+            for j in range(episode_length):
+                states.append(obs)
+
+                batch = Batch(obs=[obs], info=Batch())
+                action = int(policy(batch).act[0])
+
+                obs, rew, terminated, truncated, info = env.step(action)
+                actions.append(int(action))
+                fitness = env.get_fitness(raw=True)
+                fitnesses.append(fitness)
+                time_steps.append(j)
+                episodes.append(i)
+                
+                # Real-time trajectory logging
+                if log_file:
+                    log_file.write(f"{i},{j},{int(np.argmax(obs))},{fitness},{int(action)}\n")
+                    if j % 1000 == 0:
+                        log_file.flush()
+
+    if log_file:
+        log_file.close()
 
     results_df = pd.DataFrame(
         {"Episode": episodes, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
@@ -353,7 +381,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     
     # Evaluate SHEPHERD baseline if computationally feasible (N <= 3)
     shepherd_results_df_plot = None
-    if v_N <= 3 and not (hp_args and getattr(hp_args, 'no_shepherd', False)):
+    if v_N <= 3 and (hp_args and getattr(hp_args, 'eval_shepherd', False)):
         print("\nEvaluating SHEPHERD MDP baseline...")
         shepherd_mdp = ShepherdMDP.from_env(env, L=getattr(hp_args, 'shepherd_resolution', 3), discount=0.99)
         shepherd_mdp.solve()
@@ -575,7 +603,7 @@ def main_wf_landscapes(train, signature: str | None = None, filename: str | None
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="REMARC Runner")
     parser.add_argument("--mode", type=str, choices=["wf_ls"], default="wf_ls")
-    parser.add_argument('--no-shepherd', action='store_true', help='Skip SHEPHERD baseline evaluation')
+    parser.add_argument('--eval-shepherd', action='store_true', help='Evaluate SHEPHERD baseline')
     parser.add_argument('--shepherd-resolution', type=int, default=3, help='Lattice resolution L for SHEPHERD exact MDP solver')
     parser.add_argument("--train", action="store_true", help="Train before evaluation")
     parser.add_argument("--no-train", action="store_false", dest="train", help="Skip training (only evaluation)")

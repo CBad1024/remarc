@@ -273,10 +273,17 @@ class ShepherdMDP:
         import warnings
         from scipy.sparse import SparseEfficiencyWarning
         
+        import scipy.linalg
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SparseEfficiencyWarning)
-            W = sparse_expm(Omega * self.dt)
-        W = W.tocsr()
+            if self.N_states <= 10000:
+                print(f"Computing dense expm for {self.N_states}x{self.N_states} matrix...")
+                W_dense = scipy.linalg.expm((Omega * self.dt).toarray())
+                from scipy.sparse import csr_matrix
+                W = csr_matrix(W_dense)
+            else:
+                W = sparse_expm(Omega * self.dt)
+                W = W.tocsr()
 
         # Clip tiny negative entries from expm numerical noise
         if W.nnz:

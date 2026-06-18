@@ -478,6 +478,112 @@ def plot_policy_magnitude_difference_slices(
     return fig
 
 
+def plot_policy_fitness_landscape_slices(
+    policy_fn,
+    landscapes,
+    num_drugs=4,
+    resolution=60,
+    x3_slices=None,
+    genotype_labels=None,
+    title="Normalized Fitness Landscape (RL Policy)",
+    figsize=None,
+):
+    """
+    Visualize normalized fitness of the population under the drug selected by the policy.
+    0.0 = minimum possible fitness across all landscapes (most effective)
+    1.0 = maximum possible fitness across all landscapes (least effective)
+    """
+    if genotype_labels is None:
+        genotype_labels = [f"genotype {i}" for i in range(4)]
+    if x3_slices is None:
+        x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+
+    n_slices = len(x3_slices)
+    if figsize is None:
+        figsize = (2.6 * n_slices + 1.5, 3.8)
+
+    fig, ax_array = plt.subplots(1, n_slices, figsize=figsize)
+    if n_slices == 1:
+        ax_array = [ax_array]
+
+    bary, x_cart, y_cart, tri_idx = _make_simplex_grid(resolution)
+    
+    # Calculate normalization denominator
+    g_min = np.min(landscapes)
+    g_max = np.max(landscapes)
+    denom = (g_max - g_min) if g_max != g_min else 1.0
+
+    # Plasma colormap gives contrast (don't want to overuse viridis haha)
+    cmap = mpl.colormaps["plasma"] 
+    norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
+
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        ax = ax_array[s_idx]
+        x3_mid = (x3_lo + x3_hi) / 2.0
+        S = 1.0 - x3_mid
+
+        actions = np.zeros(len(bary), dtype=int)
+        for p_idx in range(len(bary)):
+            l0, l1, l2 = bary[p_idx]
+            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            actions[p_idx] = policy_fn(state)
+
+        tri_fitness = np.zeros(len(tri_idx), dtype=float)
+        for t_idx, (v0, v1, v2) in enumerate(tri_idx):
+            a_votes = [actions[v0], actions[v1], actions[v2]]
+            tri_a = max(set(a_votes), key=a_votes.count)
+            
+            # Approximate state at the triangle's centroid
+            cb = (bary[v0] + bary[v1] + bary[v2]) / 3.0
+            state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
+            fitness = np.dot(landscapes[tri_a], state)
+            
+            # Normalize fitness to [0, 1]
+            tri_fitness[t_idx] = (fitness - g_min) / denom
+
+        verts = np.column_stack([x_cart, y_cart])
+        tri_verts = verts[tri_idx]
+        colors_rgba = [cmap(norm(f)) for f in tri_fitness]
+
+        pc = PolyCollection(tri_verts, facecolors=colors_rgba, edgecolors="none", linewidths=0)
+        ax.add_collection(pc)
+        
+        # Draw policy boundaries
+        levels = np.arange(0.5, num_drugs, 1.0)
+        ax.tricontour(Triangulation(x_cart, y_cart, tri_idx), actions, levels=levels, colors='red', linewidths=1.5, linestyles='--', zorder=10)
+
+        outline_x = [0, 1, 0.5, 0]
+        outline_y = [0, 0, _SQRT3_2, 0]
+        ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
+
+        ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]", ha="center", va="top", fontsize=8, transform=ax.transAxes)
+
+        if s_idx == 0:
+            ax.text(-0.04, -0.06, genotype_labels[0], ha="center", fontsize=7, style="italic")
+            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3], ha="center", fontsize=7, style="italic")
+        if s_idx == n_slices - 1:
+            ax.text(1.04, -0.06, genotype_labels[1], ha="center", fontsize=7, style="italic")
+            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
+
+        ax.set_xlim(-0.08, 1.08)
+        ax.set_ylim(-0.15, _SQRT3_2 + 0.15)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
+    fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
+    fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
+
+    cbar_ax = fig.add_axes([0.90, 0.25, 0.015, 0.5])
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, cax=cbar_ax, label="Normalized Tumor Fitness")
+    fig.suptitle(title, fontsize=12, y=0.97)
+    fig.subplots_adjust(wspace=0.02, left=0.03, right=0.87, bottom=0.12, top=0.90)
+
+    return fig
+
+
 def plot_four_state_simplex(
     landscapes=None,
     policy_fn=None,
@@ -554,7 +660,12 @@ def _load_ppo_policy_fn(policy_path, state_dim=4, n_actions=4, activation="relu"
     from remarc.agents.tianshou_agent import get_activation
     import gymnasium as gym
 
-    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     act_cls = get_activation(activation)
 
     net = Net(
