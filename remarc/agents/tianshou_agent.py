@@ -209,6 +209,14 @@ def load_best_policy(p: P, filename: str = "best_policy.pth", env_type: str = "w
     test_envs = DummyVectorEnv([lambda: env])
     policy = get_ppo_policy(p, test_envs).eval()
     policy = load_best_fn(policy, filename)
+    
+    # Force policy to CPU for sequential evaluation. 
+    # Batch size 1 on GPU incurs massive memory transfer latency!
+    if hasattr(policy, "to"):
+        policy.to("cpu")
+    if hasattr(policy, "device"):
+        policy.device = "cpu"
+        
     return policy
 
 
@@ -405,7 +413,12 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 # ---------------------------------------------------------------------------
 
 def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPolicy:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     activation = get_activation(p.activation)
 
     obs_shape = train_envs.get_env_attr("observation_space")[0].shape

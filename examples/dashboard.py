@@ -480,6 +480,19 @@ def plot_simplex_section(tab_id):
                 st.pyplot(fig_trained)
                 plt.close(fig_trained)
                 
+                from examples.plotting import plot_policy_fitness_landscape_slices
+                st.subheader("Simplex Visualization: Normalized Fitness (RL Policy)")
+                st.caption("Heatmap of normalized fitness under the drug chosen by the RL policy. Lower is better (darker). White dashed lines indicate drug boundaries.")
+                fig_fitness = plot_policy_fitness_landscape_slices(
+                    policy_fn=trained_fn,
+                    landscapes=landscapes,
+                    num_drugs=len(landscapes),
+                    genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+                    resolution=50,
+                )
+                st.pyplot(fig_fitness)
+                plt.close(fig_fitness)
+                
                 # --- SHEPHERD and Difference Plots ---
                 if sim["hp"].get("plot_shepherd", True):
                     current_L = sim["hp"].get("shepherd_resolution", 3)
@@ -644,6 +657,8 @@ def plot_baseline_comparison(tab_id):
                     delta_color="inverse" if improvement > 0 else "normal"
                 )
         
+        show_greedy = st.checkbox("Show Greedy Policy Trajectories", value=False)
+        
         # Determine data format: new (all_drug_trajectories) or old (trajectories)
         has_all_drugs = 'all_drug_trajectories' in baseline_data
         
@@ -721,6 +736,81 @@ def plot_baseline_comparison(tab_id):
         ax.plot(timesteps, learned_mean, label='Learned Policy', color='blue', linewidth=2.5)
         ax.fill_between(timesteps, learned_mean - learned_std, learned_mean + learned_std, alpha=0.15, color='blue')
         
+        # Greedy policy
+        if show_greedy:
+            if "greedy_trajs" not in sim or len(sim["greedy_trajs"][0]) < max_len:
+                with st.spinner("Simulating Greedy Policy..."):
+                    from remarc.envs.wright_fisher_env import WrightFisherEnv
+                    from remarc.core.landscapes import Landscape
+                    from examples.plotting import greedy_policy
+                    
+                    dataset = sim["hp"].get("dataset", "")
+                    env_setup_ok = False
+                    
+                    if DATASET_OPTIONS.get(dataset, {}).get("cli") == "four_state":
+                        from remarc.envs.utils import define_four_state_landscapes
+                        amp = sim["hp"].get("landscape_amplification", 1.0)
+                        landscapes_array = define_four_state_landscapes(amplification=amp)
+                        g_min_val, g_max_val = np.min(landscapes_array), np.max(landscapes_array)
+                        landscape_objs = [Landscape(2, sigma=0.0, ls=ls, g_min=g_min_val, g_max=g_max_val) for ls in landscapes_array]
+                        
+                        env_greedy = WrightFisherEnv(
+                            pop_size=sim["hp"].get("pop_size", 10000),
+                            seq_length=2,
+                            mutation_rate=sim["hp"].get("mutation_rate", 1e-4),
+                            gen_per_step=sim["hp"].get("gen_per_step", 500),
+                            num_drugs=len(landscapes_array),
+                            landscape_list=landscape_objs
+                        )
+                        env_setup_ok = True
+                    elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "chen":
+                        from remarc.envs.utils import define_chen_landscapes
+                        landscapes_array = define_chen_landscapes()
+                        g_min_val, g_max_val = np.min(landscapes_array), np.max(landscapes_array)
+                        landscape_objs = [Landscape(3, sigma=0.0, ls=ls, g_min=g_min_val, g_max=g_max_val) for ls in landscapes_array]
+                        
+                        env_greedy = WrightFisherEnv(
+                            pop_size=sim["hp"].get("pop_size", 10000),
+                            seq_length=3,
+                            mutation_rate=sim["hp"].get("mutation_rate", 1e-4),
+                            gen_per_step=sim["hp"].get("gen_per_step", 500),
+                            num_drugs=len(landscapes_array),
+                            landscape_list=landscape_objs
+                        )
+                        env_setup_ok = True
+                    
+                    if env_setup_ok:
+                        greedy_trajs_raw = []
+                        num_ep_greedy = sim["hp"].get("test_episodes", 100)
+                        ep_len_greedy = max_len
+                        
+                        for _ in range(num_ep_greedy):
+                            obs, _ = env_greedy.reset()
+                            ep_fitnesses = []
+                            for _ in range(ep_len_greedy):
+                                action = greedy_policy(obs, landscapes_array)
+                                obs, _, done, truncated, _ = env_greedy.step(action)
+                                ep_fitnesses.append(env_greedy.get_fitness(raw=True))
+                            greedy_trajs_raw.append(ep_fitnesses)
+                        
+                        # Normalize fitness values just like other trajectories
+                        greedy_trajs_norm = [[(v - global_min) / denom for v in t] for t in greedy_trajs_raw]
+                        sim["greedy_trajs"] = greedy_trajs_norm
+            
+            if "greedy_trajs" in sim and sim["greedy_trajs"]:
+                greedy_trajs = sim["greedy_trajs"]
+                # Ensure we don't crash if length mismatch
+                greedy_padded = np.array([t + [np.nan] * max(0, max_len - len(t)) for t in greedy_trajs])
+                # Slice to max_len if it's somehow longer
+                greedy_padded = greedy_padded[:, :max_len]
+                greedy_mean = np.nanmean(greedy_padded, axis=0)
+                greedy_std = np.nanstd(greedy_padded, axis=0)
+                
+                # Plot
+                plot_len = min(len(timesteps), len(greedy_mean))
+                ax.plot(timesteps[:plot_len], greedy_mean[:plot_len], label='Greedy Policy', color='#f1c40f', linewidth=2.5, linestyle='--', zorder=10)
+                ax.fill_between(timesteps[:plot_len], (greedy_mean - greedy_std)[:plot_len], (greedy_mean + greedy_std)[:plot_len], alpha=0.2, color='#f1c40f', zorder=9)
+        
         # All single-drug baselines
         drug_colors = ['#e67e22', '#27ae60', '#8e44ad', '#c0392b', '#2980b9', '#f39c12', '#1abc9c', '#d35400', '#7f8c8d', '#2c3e50']
         best_drug = baseline_data.get('best_drug', -1)
@@ -781,8 +871,18 @@ def plot_baseline_comparison(tab_id):
             from examples.plotting import plot_population_density_slices
             st.subheader("Population Density (Learned Policy)")
             try:
-                landscapes = sim.get("landscapes", [])
-                num_drugs = len(landscapes) if landscapes else 4
+                dataset = sim["hp"].get("dataset", "")
+                if DATASET_OPTIONS.get(dataset, {}).get("cli") == "four_state":
+                    from remarc.envs.utils import define_four_state_landscapes
+                    amp = sim["hp"].get("landscape_amplification", 1.0)
+                    landscapes = define_four_state_landscapes(amplification=amp)
+                elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "chen":
+                    from remarc.envs.utils import define_chen_landscapes
+                    landscapes = define_chen_landscapes()
+                else:
+                    landscapes = sim.get("landscapes", [])
+                
+                num_drugs = len(landscapes) if len(landscapes) > 0 else 4
                 
                 trained_fn = None
                 signature = sim.get("signature")
@@ -1129,7 +1229,7 @@ def render_tab_content(tab_id):
             st.markdown("##### Testing Parameters")
             sim["hp"]["test_episodes"] = st.number_input("Test Episodes", 1, 10000, sim["hp"].get("test_episodes", 100), key=f"te_{tab_id}")
             sim["hp"]["test_episode_length"] = st.number_input("Test Episode Length", 1, 10000, sim["hp"].get("test_episode_length", 100), key=f"tel_{tab_id}")
-            sim["hp"]["plot_shepherd"] = st.checkbox("Evaluate SHEPHERD Baseline (N<=3)", value=sim["hp"].get("plot_shepherd", True), key=f"shep_{tab_id}", help="Disable to save computation time")
+            sim["hp"]["plot_shepherd"] = st.checkbox("Evaluate SHEPHERD Baseline (N<=3)", value=sim["hp"].get("plot_shepherd", False), key=f"shep_{tab_id}", help="Disable to save computation time")
             if sim["hp"]["plot_shepherd"]:
                 sim["hp"]["shepherd_resolution"] = st.number_input("SHEPHERD Lattice Resolution (L)", min_value=2, max_value=20, value=sim["hp"].get("shepherd_resolution", 3), key=f"shep_res_{tab_id}", help="Number of grid points per axis in u-space. Default is 3.")
 
