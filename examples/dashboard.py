@@ -90,7 +90,8 @@ if "sims" not in st.session_state:
                 "test_episodes": 100,
                 "test_episode_length": 100,
                 "plot_shepherd": True
-            }
+            },
+            "starred": False
         }
 def copy_settings_callback(tab_id):
     copy_source = st.session_state.get(f"copy_source_{tab_id}")
@@ -135,8 +136,40 @@ def copy_settings_callback(tab_id):
         
     st.toast(f"Copied settings from {copy_source}!", icon="✅")
 
+def archive_run(signature, starred):
+    if not signature:
+        return
+    import shutil
+    
+    # If not starred, delete tensorboard logs and move other files to archive
+    if not starred:
+        tb_dir = project_root / "log" / "tensorboard" / signature
+        if tb_dir.exists():
+            shutil.rmtree(tb_dir, ignore_errors=True)
+            
+        archive_dir = project_root / "log" / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        
+        for folder in ["RL", "plots", "baselines", "metrics", "trajectories", "policies"]:
+            src_dir = project_root / "log" / folder
+            if not src_dir.exists():
+                continue
+            for file in src_dir.glob(f"*{signature}*"):
+                if file.is_file():
+                    try:
+                        shutil.move(str(file), str(archive_dir / file.name))
+                    except Exception:
+                        pass
+
 def start_simulation(tab_id):
     sim = st.session_state.sims[tab_id]
+    
+    # Archive the old run if it wasn't starred
+    if sim.get("signature") and not sim.get("starred", False):
+        archive_run(sim["signature"], False)
+    
+    # Reset starred status for the new run
+    sim["starred"] = False
     
     # Auto-fix dataset mismatch for evaluation to prevent shape mismatch errors
     if not sim["train"] and sim.get("signature"):
@@ -1167,7 +1200,7 @@ def render_tab_content(tab_id):
     # Top Control Bar
     with st.container():
         st.markdown('<div class="highlight-box">', unsafe_allow_html=True)
-        cols_top = st.columns([1.5, 1, 1, 1, 1, 1, 1])
+        cols_top = st.columns([1.5, 1, 1, 1, 1, 1, 1, 1])
         
         with cols_top[0]:
             sim["mode"] = st.selectbox(
@@ -1218,8 +1251,20 @@ def render_tab_content(tab_id):
                 show_logs(tab_id)
 
         with cols_top[6]:
+            # Add Star Run toggle
+            has_sig = sim.get("signature") and sim["exit_code"] == 0
+            if has_sig:
+                sim["starred"] = st.toggle("⭐ Star Run", value=sim.get("starred", False), key=f"star_run_{tab_id}")
+            else:
+                st.toggle("⭐ Star Run", disabled=True, key=f"star_run_{tab_id}")
+
+        with cols_top[7]:
             if st.button("🗑️ CLEAR", key=f"clear_tab_btn_{tab_id}", use_container_width=True):
+                # Archive the old run if it wasn't starred
+                if sim.get("signature") and not sim.get("starred", False):
+                    archive_run(sim["signature"], False)
                 sim["logs"] = ""
+                sim["starred"] = False
                 st.rerun()
                 
         # Copy Settings

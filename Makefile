@@ -1,4 +1,4 @@
-.PHONY: dashboard export-onnx run-client compare-models
+.PHONY: dashboard export-onnx run-client compare-models tensorboard
 
 # ==========================================
 # Configuration Variables
@@ -12,6 +12,9 @@ GEN_PER_STEP ?= 10
 
 dashboard: ## Launch the Streamlit dashboard
 	uv run streamlit run examples/dashboard.py
+
+tensorboard: ## Launch the TensorBoard server
+	uv run tensorboard --logdir log/tensorboard
 
 export-onnx: ## Export the RL policy to ONNX format
 	uv run python examples/export_model.py --policy $(POLICY) --hidden-sizes $(HIDDEN_SIZES) --actor-sizes $(ACTOR_SIZES)
