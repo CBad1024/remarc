@@ -367,19 +367,22 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     def test_fn(epoch, env_step):
         if test_collector:
-            stats = test_collector.collect(n_episode=p.test_episodes)
+            # Limit training evaluation to 5 episodes to prevent massive slowdowns
+            # when the dashboard passes test_episodes=100 for final evaluation.
+            eval_eps = min(getattr(p, "test_episodes", 10), 5)
+            stats = test_collector.collect(n_episode=eval_eps)
             if stats.returns_stat:
                 metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
             log_policy_snapshot(sig, policy, 2**v_N)
 
     def train_fn(epoch, env_step):
-        # Decay entropy more aggressively
-        if epoch < p.epochs * 0.2:
+        # Delay entropy decay so agent explores longer
+        if epoch < p.epochs * 0.4:
             current_ent_coef = getattr(p, "ent_coef", 0.05)
         else:
-            # Drop to 0.01 by 60% of training
-            decay_steps = p.epochs * 0.4
-            current_ent_coef = max(policy.ent_coef - (getattr(p, "ent_coef", 0.05) - 0.01) / decay_steps, 0.01)
+            # Drop to 0.02 instead of 0.01 so it never completely stops exploring
+            decay_steps = p.epochs * 0.5
+            current_ent_coef = max(policy.ent_coef - (getattr(p, "ent_coef", 0.05) - 0.02) / decay_steps, 0.02)
         policy.ent_coef = current_ent_coef
 
     wrapped_logger = LossCapturingLogger(logger, last_loss)
@@ -392,7 +395,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         test_collector=test_collector,
         step_per_epoch=p.train_steps_per_epoch,
         repeat_per_collect=8,  # Recommended value for PPO
-        episode_per_test=p.test_episodes,
+        episode_per_test=min(getattr(p, "test_episodes", 10), 5),
         step_per_collect=p.train_steps_per_epoch,
         train_fn=train_fn,
         test_fn=test_fn,
@@ -413,12 +416,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 # ---------------------------------------------------------------------------
 
 def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPolicy:
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
+    device = torch.device("cpu")
     activation = get_activation(p.activation)
 
     obs_shape = train_envs.get_env_attr("observation_space")[0].shape
@@ -426,19 +424,19 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPo
 
     net = Net(
         state_shape=obs_shape,
-        hidden_sizes=[64, 64],
+        hidden_sizes=[256, 256, 256],
         activation=activation,
         device=device,
     )
     actor = Actor(
         preprocess_net=net,
         action_shape=action_shape,
-        hidden_sizes=[32],
+        hidden_sizes=[128],
         device=device,
     ).to(device)
     critic = Critic(
         preprocess_net=net,
-        hidden_sizes=[32],
+        hidden_sizes=[128],
         device=device,
     ).to(device)
 
@@ -450,16 +448,16 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPo
         optim=optim,
         dist_fn=torch.distributions.Categorical,
         action_space=train_envs.get_env_attr("action_space")[0],
-        discount_factor=0.99,
+        discount_factor=0.80,
         max_grad_norm=0.5,
         vf_coef=0.5,
         ent_coef=getattr(p, "ent_coef", 0.05),
-        gae_lambda=0.95,
+        gae_lambda=0.80,
         reward_normalization=True,
         action_scaling=False,
         deterministic_eval=True,
         dual_clip=None,
-        value_clip=True,
+        value_clip=False,
         eps_clip=0.2,
         advantage_normalization=True,
         recompute_advantage=False,

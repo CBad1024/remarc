@@ -670,19 +670,19 @@ def _load_ppo_policy_fn(policy_path, state_dim=4, n_actions=4, activation="relu"
 
     net = Net(
         state_shape=(state_dim,),
-        hidden_sizes=[64, 64],
+        hidden_sizes=[256, 256, 256],
         activation=act_cls,
         device=device,
     )
     actor = Actor(
         preprocess_net=net,
         action_shape=n_actions,
-        hidden_sizes=[32],
+        hidden_sizes=[128],
         device=device,
     ).to(device)
     critic = Critic(
         preprocess_net=net,
-        hidden_sizes=[32],
+        hidden_sizes=[128],
         device=device,
     ).to(device)
 
