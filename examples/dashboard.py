@@ -92,6 +92,48 @@ if "sims" not in st.session_state:
                 "plot_shepherd": True
             }
         }
+def copy_settings_callback(tab_id):
+    copy_source = st.session_state.get(f"copy_source_{tab_id}")
+    if not copy_source:
+        return
+    source_id = int(copy_source.split(" ")[1]) - 1
+    
+    tgt_sim = st.session_state.sims[tab_id]
+    src_sim = st.session_state.sims[source_id]
+    
+    import copy
+    tgt_sim["hp"] = copy.deepcopy(src_sim["hp"])
+    
+    fields_to_copy = ["mode", "train", "signature", "last_auto_sig", "selected_policy"]
+    for field in fields_to_copy:
+        if field in src_sim:
+            tgt_sim[field] = copy.deepcopy(src_sim[field])
+            
+    # Explicitly update widget states to force frontend to reflect new values
+    widget_mapping = {
+        "lr": "lr", "epochs": "epochs", "batch_size": "batch",
+        "n_mut": "n_mut", "sigma": "sigma", "dataset": "dataset_sel",
+        "activation": "act", "reward_clip": "clip", "pop_size": "pop",
+        "mutation_rate": "mut", "gen_per_step": "gps", "ent_coef": "ent",
+        "gamma": "gamma", "gae_lambda": "gae", "delta_multiplier": "delta",
+        "episode_steps": "ep_steps", "reward_scale": "reward_scale",
+        "random_start": "rstart", "stochastic": "stochastic",
+        "test_episodes": "te", "test_episode_length": "tel",
+        "plot_shepherd": "shep", "shepherd_resolution": "shep_res",
+        "landscape_amplification": "amp"
+    }
+    for hp_key, widget_prefix in widget_mapping.items():
+        if hp_key in tgt_sim["hp"]:
+            st.session_state[f"{widget_prefix}_{tab_id}"] = tgt_sim["hp"][hp_key]
+            
+    st.session_state[f"mode_sel_{tab_id}"] = tgt_sim["mode"]
+    st.session_state[f"train_cb_{tab_id}"] = tgt_sim["train"]
+    if "signature" in tgt_sim:
+        st.session_state[f"sig_input_{tab_id}"] = tgt_sim["signature"]
+    if "selected_policy" in tgt_sim:
+        st.session_state[f"policy_custom_{tab_id}"] = tgt_sim["selected_policy"]
+        
+    st.toast(f"Copied settings from {copy_source}!", icon="✅")
 
 def start_simulation(tab_id):
     sim = st.session_state.sims[tab_id]
@@ -1097,15 +1139,27 @@ def get_auto_signature(hp):
         s = f"{val:.1e}"
         return s.replace(".0e", "e").replace("e-0", "e-").replace("e+0", "e+")
 
+    def fmt_f(val):
+        if isinstance(val, float):
+            return f"{val:.4f}".rstrip('0').rstrip('.')
+        return str(val)
+
     lr = f"{fmt_e(hp['lr'])}LR"
     mr = f"{fmt_e(hp['mutation_rate'])}MR"
     gps = f"{hp['gen_per_step']}gps"
     steps = f"{hp.get('episode_steps', 20)}st"
     batch = f"{hp['batch_size']}b"
     epochs = f"{hp['epochs']}ep"
+    
+    pop = f"{hp.get('pop_size', 10000)}pop"
+    ent = f"{fmt_f(hp.get('ent_coef', 0.05))}ent"
+    gam = f"{fmt_f(hp.get('gamma', 0.99))}gam"
+    gae = f"{fmt_f(hp.get('gae_lambda', 0.95))}gae"
+    rsc = f"{fmt_f(hp.get('reward_scale', 100.0))}rsc"
+    
     rs = "randomstart" if hp.get("random_start", True) else "norandomstart"
     
-    return f"{ds}_{lr}_{mr}_{gps}_{steps}_{batch}_{epochs}_{rs}"
+    return f"{ds}_{lr}_{mr}_{gps}_{steps}_{batch}_{epochs}_{pop}_{ent}_{gam}_{gae}_{rsc}_{rs}"
 
 def render_tab_content(tab_id):
     sim = st.session_state.sims[tab_id]
@@ -1133,7 +1187,7 @@ def render_tab_content(tab_id):
         with cols_top[2]:
             sim["hp"]["epochs"] = st.number_input("Epochs", 1, 1000, sim["hp"]["epochs"], key=f"epochs_{tab_id}")
         with cols_top[3]:
-            sim["hp"]["batch_size"] = st.selectbox("Batch size", [16, 32, 64, 128, 256], index=3, key=f"batch_{tab_id}")
+            sim["hp"]["batch_size"] = st.selectbox("Batch size", [16, 32, 64, 128, 256], index=[16, 32, 64, 128, 256].index(sim["hp"].get("batch_size", 128)), key=f"batch_{tab_id}")
             
         with cols_top[4]:
              can_run = not sim["train"] or (sim["train"] and sim.get("signature", "").strip() != "")
@@ -1174,21 +1228,8 @@ def render_tab_content(tab_id):
             with copy_cols[0]:
                 copy_source = st.selectbox("Source Tab", [f"Sim {i+1}" for i in range(NUM_TABS) if i != tab_id], key=f"copy_source_{tab_id}")
             
-            def do_copy(src_string, target_id):
-                source_id = int(src_string.split(" ")[1]) - 1
-                import copy
-                st.session_state.sims[target_id]["hp"] = copy.deepcopy(st.session_state.sims[source_id]["hp"])
-                st.session_state.sims[target_id]["mode"] = st.session_state.sims[source_id]["mode"]
-                
-                # Delete target widget states so Streamlit forces re-initialization using the copied 'hp' dictionary
-                target_suffix = f"_{target_id}"
-                for key in list(st.session_state.keys()):
-                    if key.endswith(target_suffix) and not key.startswith("copy_source"):
-                        del st.session_state[key]
-
             with copy_cols[1]:
-                if st.button("Copy Settings", key=f"copy_btn_{tab_id}", use_container_width=True, on_click=do_copy, args=(copy_source, tab_id)):
-                    st.toast(f"Copied settings from {copy_source}!", icon="✅")
+                st.button("Copy Settings", key=f"copy_btn_{tab_id}", use_container_width=True, on_click=copy_settings_callback, args=(tab_id,))
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1290,9 +1331,9 @@ def render_tab_content(tab_id):
             sim["hp"]["pop_size"] = st.number_input("Population Size", 100, 1000000, sim["hp"]["pop_size"], key=f"pop_{tab_id}")
             sim["hp"]["mutation_rate"] = st.number_input("Mutation Rate", 0.0, 1.0, sim["hp"]["mutation_rate"], format="%.1e", key=f"mut_{tab_id}")
             sim["hp"]["gen_per_step"] = st.number_input("Gens per Step", 1, 10000, sim["hp"]["gen_per_step"], key=f"gps_{tab_id}")
-            sim["hp"]["ent_coef"] = st.number_input("Entropy Coef.", 0.0, 1.0, sim["hp"].get("ent_coef", 0.05), step=0.01, key=f"ent_{tab_id}", help="Higher = more exploration")
-            sim["hp"]["gamma"] = st.number_input("Discount Factor (gamma)", 0.0, 1.0, sim["hp"].get("gamma", 0.99), step=0.01, key=f"gamma_{tab_id}", help="Discount factor. Higher = longer horizon")
-            sim["hp"]["gae_lambda"] = st.number_input("GAE Lambda", 0.0, 1.0, sim["hp"].get("gae_lambda", 0.95), step=0.01, key=f"gae_{tab_id}", help="GAE lambda. Higher = higher variance, lower bias")
+            sim["hp"]["ent_coef"] = st.number_input("Entropy Coef.", 0.0, 1.0, sim["hp"].get("ent_coef", 0.05), step=0.01, format="%.4f", key=f"ent_{tab_id}", help="Higher = more exploration")
+            sim["hp"]["gamma"] = st.number_input("Discount Factor (gamma)", 0.0, 1.0, sim["hp"].get("gamma", 0.99), step=0.01, format="%.4f", key=f"gamma_{tab_id}", help="Discount factor. Higher = longer horizon")
+            sim["hp"]["gae_lambda"] = st.number_input("GAE Lambda", 0.0, 1.0, sim["hp"].get("gae_lambda", 0.95), step=0.01, format="%.4f", key=f"gae_{tab_id}", help="GAE lambda. Higher = higher variance, lower bias")
             sim["hp"]["delta_multiplier"] = st.number_input("Delta Bonus Multiplier", 0.0, 10.0, sim["hp"].get("delta_multiplier", 0.0), step=0.1, key=f"delta_{tab_id}", help="Rewards immediate fitness drops. Set to 0.0 to allow RL to sacrifice short-term fitness for long-term payoffs (avoids greedy trap).")
             sim["hp"]["episode_steps"] = st.number_input("Episode Steps", 1, 1000000, sim["hp"].get("episode_steps", 20), key=f"ep_steps_{tab_id}", help="Number of steps per episode")
             sim["hp"]["reward_scale"] = st.number_input("Reward Scale", 0.1, 10000.0, sim["hp"].get("reward_scale", 100.0), step=10.0, key=f"reward_scale_{tab_id}", help="Scale for rewards (recommended 100 for WF)")
@@ -1376,6 +1417,12 @@ with st.sidebar:
 
 @st.fragment(run_every=5)
 def queue_daemon():
+    # Globally poll running processes so background tasks finish properly 
+    # even when they are not the active tab
+    for i, s in st.session_state.sims.items():
+        if s["running"]:
+            update_logs_for_sim(i)
+            
     if not st.session_state.run_queue:
         return
         
