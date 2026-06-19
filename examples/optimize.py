@@ -16,14 +16,14 @@ def objective(trial):
     # Sample hyperparameters
     lr = trial.suggest_float("lr", 1e-5, 1e-3, log=True)
     gamma = trial.suggest_float("gamma", 0.90, 0.999)
-    gae_lambda = trial.suggest_float("gae_lambda", 0.90, 0.99)
     ent_coef = trial.suggest_float("ent_coef", 0.01, 0.1)
     batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128, 256])
-    epochs = trial.suggest_int("epochs", 20, 100)
-    train_steps_per_epoch = trial.suggest_int("train_steps_per_epoch", 1000, 10000, step=1000)
-    reward_scale = trial.suggest_float("reward_scale", 10.0, 1000.0, log=True)
     
     # Static parameters
+    epochs = 100
+    gae_lambda = 0.95
+    train_steps_per_epoch = 2000
+    reward_scale = 100.0
     gen_per_step = 10
     
     p = P(
@@ -44,16 +44,25 @@ def objective(trial):
         episode_steps=20
     )
     
-    signature = f"optuna_trial_{trial.number}"
+    seeds = [42, 43, 44]
+    rewards = []
     
-    try:
-        reward = train_wf_landscapes(p, signature=signature, trial=trial)
-        return reward
-    except Exception as e:
-        if isinstance(e, optuna.exceptions.TrialPruned):
+    for seed in seeds:
+        signature = f"optuna_trial_{trial.number}_seed_{seed}"
+        try:
+            reward = train_wf_landscapes(p, signature=signature, trial=trial, seed=seed)
+            rewards.append(reward)
+        except optuna.exceptions.TrialPruned as e:
+            # If any seed fails the pruning check, abort the entire trial
+            logging.info(f"Trial {trial.number} pruned at seed {seed}")
             raise e
-        logging.error(f"Trial {trial.number} failed with exception: {e}")
-        raise e
+        except Exception as e:
+            logging.error(f"Trial {trial.number} failed at seed {seed} with exception: {e}")
+            raise e
+            
+    return sum(rewards) / len(rewards)
+
+
 
 class ETACallback:
     def __init__(self, total_trials: int, cooldown_seconds: int):
@@ -63,21 +72,15 @@ class ETACallback:
         
     def __call__(self, study: optuna.Study, trial: optuna.trial.FrozenTrial):
         if trial.state.is_finished():
-            # Calculate duration
             if trial.datetime_start and trial.datetime_complete:
                 duration = (trial.datetime_complete - trial.datetime_start).total_seconds()
                 self.durations.append(duration)
-            
-            # Print cooldown
             print(f"\nTrial {trial.number} finished. Cooling down CPU for {self.cooldown_seconds} seconds...")
             time.sleep(self.cooldown_seconds)
-            
-            # Print ETA
             completed_trials = len(self.durations)
             remaining_trials = self.total_trials - completed_trials
             if remaining_trials > 0 and completed_trials > 0:
                 avg_duration = sum(self.durations) / completed_trials
-                # Total ETA includes average trial duration + cooldown
                 estimated_remaining_seconds = remaining_trials * (avg_duration + self.cooldown_seconds)
                 eta = datetime.timedelta(seconds=int(estimated_remaining_seconds))
                 print(f"--- Estimated Time Remaining for {remaining_trials} trials: {eta} ---\n")
@@ -101,7 +104,7 @@ if __name__ == "__main__":
     
     print(f"Starting Optuna optimization for Wright-Fisher landscapes...")
     
-    total_trials = 50
+    total_trials = 100
     cooldown = 60
     study.optimize(objective, n_trials=total_trials, callbacks=[ETACallback(total_trials, cooldown)])
     
