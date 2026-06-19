@@ -3,7 +3,7 @@ from gymnasium import spaces
 import numpy as np
 import itertools
 import functools
-from tianshou.env import DummyVectorEnv
+from tianshou.env import DummyVectorEnv, SubprocVectorEnv
 from ..core.landscapes import Landscape
 
 
@@ -49,7 +49,7 @@ class WrightFisherEnv(gym.Env):
     def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4,
                  gen_per_step=500, total_generations=1000, num_drugs=10,
                  random_start=False, landscape_list=None, reward_scale=1.0,
-                 stochastic=True):
+                 stochastic=True, delta_multiplier=1.0):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
         self.seq_length = seq_length
@@ -58,6 +58,7 @@ class WrightFisherEnv(gym.Env):
         self.switch_interval = gen_per_step
         self.total_generations = total_generations
         self.stochastic = stochastic
+        self.delta_multiplier = delta_multiplier
         self.fit_trajectory = []
 
         # --- Genotype bookkeeping ---
@@ -244,7 +245,7 @@ class WrightFisherEnv(gym.Env):
             delta = self.prev_step_fitness - avg_fit  # positive when fitness drops
             # Restore a balanced delta bonus. 
             # 1.0 multiplier gives it equal weight to the absolute fitness.
-            reward += delta * self.reward_scale * 1.0
+            reward += delta * self.reward_scale * self.delta_multiplier
         self.prev_step_fitness = avg_fit
 
         terminated = self.generation >= self.total_generations
@@ -298,16 +299,16 @@ class WrightFisherEnv(gym.Env):
     @classmethod
     def getEnv(cls, n_train, n_test, landscape_list=None, num_drugs=10,
                gen_per_step=25, seq_length=4, random_start=False,
-               episode_steps=20, reward_scale=1.0, stochastic=True):
+               episode_steps=20, reward_scale=1.0, stochastic=True, delta_multiplier=0.0):
         total_generations = gen_per_step * episode_steps
         fn_train = functools.partial(
             _make_env_train, landscape_list, num_drugs, gen_per_step,
-            seq_length, random_start, total_generations, reward_scale, stochastic)
+            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier)
         fn_test = functools.partial(
             _make_env_test, landscape_list, num_drugs, gen_per_step,
-            seq_length, total_generations, reward_scale, stochastic)
-        train_envs = DummyVectorEnv([fn_train for _ in range(n_train)])
-        test_envs = DummyVectorEnv([fn_test for _ in range(n_test)])
+            seq_length, total_generations, reward_scale, stochastic, delta_multiplier)
+        train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
+        test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
 
 
@@ -333,21 +334,21 @@ class ThreeGenotypeEnv(WrightFisherEnv):
 # --------------------------------------------------------------------------
 
 def _make_env_train(landscape_list, num_drugs, gen_per_step, seq_length,
-                    random_start, total_generations, reward_scale, stochastic):
+                    random_start, total_generations, reward_scale, stochastic, delta_multiplier):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=random_start, total_generations=total_generations,
-        reward_scale=reward_scale, stochastic=stochastic)
+        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier)
 
 
 def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
-                   total_generations, reward_scale, stochastic):
+                   total_generations, reward_scale, stochastic, delta_multiplier):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=False, total_generations=total_generations,
-        reward_scale=reward_scale, stochastic=stochastic)
+        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier)
 
 
 

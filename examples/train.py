@@ -274,11 +274,14 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
             dataset=hp_args.dataset if hp_args else "chen",
             gen_per_step=hp_args.gen_per_step if hp_args else 500,
             ent_coef=hp_args.ent_coef,
+            gamma=hp_args.gamma if hp_args and hasattr(hp_args, 'gamma') else p_base.gamma,
+            gae_lambda=hp_args.gae_lambda if hp_args and hasattr(hp_args, 'gae_lambda') else p_base.gae_lambda,
             episode_steps=hp_args.episode_steps,
             reward_scale=hp_args.reward_scale if hp_args else 100.0,
             random_start=getattr(hp_args, 'random_start', True),
             landscape_amplification=getattr(hp_args, 'landscape_amplification', 1.0),
-            stochastic=getattr(hp_args, 'stochastic', True)
+            stochastic=getattr(hp_args, 'stochastic', True),
+            delta_multiplier=getattr(hp_args, 'delta_multiplier', 0.0)
         )
     else:
         # Even if no hp_args, we should ensure num_actions and state_shape are correct for the dataset
@@ -348,7 +351,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     # WF uses PPO, so we must load as PPO
     v_random_start = getattr(hp_args, 'random_start', True) if hp_args else True
     v_stochastic = getattr(hp_args, 'stochastic', True) if hp_args else True
-    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start, stochastic=v_stochastic)
+    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
     best_policy = load_best_policy(p, filename=filename, env_type="wf", ppo=True)
     # Update env with WF specific parameters
     if hp_args:
@@ -373,7 +376,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
 
     # Evaluate random policy baseline
     random_results_df_plot = None
-    random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic)
+    random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
     random_results_df_plot = run_sim_tianshou(env=random_env, policy=load_random_policy(p), num_episodes=num_episodes, episode_length=episode_length)
     
     if random_results_df_plot is not None:
@@ -385,7 +388,7 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
         print("\nEvaluating SHEPHERD MDP baseline...")
         shepherd_mdp = ShepherdMDP.from_env(env, L=getattr(hp_args, 'shepherd_resolution', 3), discount=0.99)
         shepherd_mdp.solve()
-        shepherd_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic)
+        shepherd_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
         shepherd_results_df_plot = run_sim_shepherd(env=shepherd_env, mdp_solver=shepherd_mdp, num_episodes=num_episodes, episode_length=episode_length)
         print("\nAverage SHEPHERD WF fitness: ", np.mean(shepherd_results_df_plot["Fitness"]))
     
@@ -625,6 +628,9 @@ if __name__ == "__main__":
     parser.add_argument("--reward-clip", action="store_true", help="Enable reward clipping (default roughly [-5, 5])")
     parser.add_argument("--dataset", type=str, default="chen", choices=["chen", "four_state", "synthetic"], help="Dataset to use (chen, four_state, or synthetic)")
     parser.add_argument("--ent-coef", type=float, default=0.05, help="Entropy coefficient for PPO (default: 0.05)")
+    parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor (gamma) (default: 0.99)")
+    parser.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda (default: 0.95)")
+    parser.add_argument("--delta-multiplier", type=float, default=0.0, help="Multiplier for the step-to-step delta bonus reward (default: 0.0)")
     parser.add_argument("--episode-steps", type=int, default=20, help="Number of steps per episode (default: 20)")
     parser.add_argument("--random-start", action="store_true", default=True, help="Start episodes from random genotypes (default: True)")
     parser.add_argument("--no-random-start", action="store_false", dest="random_start", help="Start all episodes from genotype 000")

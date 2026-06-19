@@ -333,11 +333,26 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         episode_steps=getattr(p, "episode_steps", 20),
         reward_scale=getattr(p, "reward_scale", 100.0),
         stochastic=getattr(p, "stochastic", True),
+        delta_multiplier=getattr(p, "delta_multiplier", 0.0),
     )
 
     print("Saving testing environments to testing_envs.pkl")
+    total_gens = getattr(p, "gen_per_step", 500) * getattr(p, "episode_steps", 20)
+    test_env_instances = [
+        WrightFisherEnv(
+            landscape_list=landscape_list, 
+            num_drugs=len(landscape_list),
+            gen_per_step=getattr(p, "gen_per_step", 500),
+            seq_length=v_N,
+            random_start=False, 
+            total_generations=total_gens,
+            reward_scale=getattr(p, "reward_scale", 100.0), 
+            stochastic=getattr(p, "stochastic", True),
+            delta_multiplier=getattr(p, "delta_multiplier", 0.0)
+        ) for _ in range(2)
+    ]
     with open(os.path.join(log_path, "testing_envs.pkl"), "wb") as f:
-        pickle.dump([getattr(worker, 'env') for worker in train_envs.workers], f)
+        pickle.dump(test_env_instances, f)
 
     if getattr(p, "reward_clip", False):
         print("Enable reward clipping (WF)")
@@ -448,11 +463,11 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPo
         optim=optim,
         dist_fn=torch.distributions.Categorical,
         action_space=train_envs.get_env_attr("action_space")[0],
-        discount_factor=0.80,
+        discount_factor=getattr(p, "gamma", 0.99),
         max_grad_norm=0.5,
         vf_coef=0.5,
         ent_coef=getattr(p, "ent_coef", 0.05),
-        gae_lambda=0.80,
+        gae_lambda=getattr(p, "gae_lambda", 0.95),
         reward_normalization=True,
         action_scaling=False,
         deterministic_eval=True,
