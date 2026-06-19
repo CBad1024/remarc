@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "remarc"
-version = "0.2.2"
+version = "0.2.3"
 description = "Reinforcement-learning based Evolutionary Markovian Resistance Control"
 readme = "README.md"
 requires-python = ">=3.11"
