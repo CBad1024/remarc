@@ -275,9 +275,15 @@ def save_run_params(p: P, signature: str | None):
     print(f"Run parameters saved to: {filename}")
 
 
-def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial | None" = None):
+def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial | None" = None, seed: int | None = None):
     # --- Save params before anything else ---
     save_run_params(p, signature)
+    
+    if seed is not None:
+        import random
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
 
     v_N = int(np.log2(p.state_shape[0]))
 
@@ -391,7 +397,8 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
             log_policy_snapshot(sig, policy, 2**v_N)
             
             if trial is not None:
-                trial.report(stats.returns_stat.mean, epoch)
+                norm_reward = stats.returns_stat.mean / getattr(p, "reward_scale", 1.0)
+                trial.report(norm_reward, epoch)
                 if trial.should_prune():
                     raise optuna.exceptions.TrialPruned()
 
@@ -451,7 +458,8 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         }
     )
     
-    return test_result.returns_stat.mean
+    final_norm_reward = test_result.returns_stat.mean / getattr(p, "reward_scale", 1.0)
+    return final_norm_reward
 
 
 # ---------------------------------------------------------------------------
