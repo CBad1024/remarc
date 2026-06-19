@@ -79,8 +79,7 @@ metrics_path = os.path.join(PROJECT_ROOT, "log", "metrics")
 os.makedirs(log_path, exist_ok=True)
 os.makedirs(metrics_path, exist_ok=True)
 
-writer = SummaryWriter(log_path)
-logger = TensorboardLogger(writer)
+
 
 
 class MetricsLogger:
@@ -400,8 +399,11 @@ def train_wf_landscapes(p: P, signature: str | None = None):
             current_ent_coef = max(policy.ent_coef - (getattr(p, "ent_coef", 0.05) - 0.02) / decay_steps, 0.02)
         policy.ent_coef = current_ent_coef
 
+    tb_log_path = os.path.join(PROJECT_ROOT, "log", "tensorboard", sig)
+    os.makedirs(tb_log_path, exist_ok=True)
+    writer = SummaryWriter(tb_log_path)
+    logger = TensorboardLogger(writer)
     wrapped_logger = LossCapturingLogger(logger, last_loss)
-
     drug_trainer = OnpolicyTrainer(
         policy=policy,
         max_epoch=p.epochs,
@@ -424,6 +426,24 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     test_result = test_collector.collect(n_episode=p.test_episodes)
     print(f"Final testing result: {test_result}")
+    
+    # Log hyperparameters and final performance
+    hparams = {}
+    for k, v in dataclasses.asdict(p).items():
+        if isinstance(v, (int, float, str, bool)):
+            hparams[k] = v
+        elif v is None:
+            hparams[k] = "None"
+        else:
+            hparams[k] = str(v)
+            
+    writer.add_hparams(
+        hparam_dict=hparams,
+        metric_dict={
+            "test_reward": test_result.returns_stat.mean,
+            "test_length": test_result.lens_stat.mean
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
