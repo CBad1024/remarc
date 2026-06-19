@@ -149,3 +149,7 @@ dontsetup.txt
 model_info*.json
 pareto_frontier_results.csv
 notes.txt
+
+# Generated output artifacts
+*.onnx
+*.png

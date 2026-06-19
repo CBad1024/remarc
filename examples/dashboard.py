@@ -52,6 +52,13 @@ DATASET_OPTIONS = {
 }
 
 # Initialize session state for simulations
+if "run_queue" not in st.session_state:
+    st.session_state.run_queue = []
+if "cooldown_seconds" not in st.session_state:
+    st.session_state.cooldown_seconds = 120
+if "cooldown_until" not in st.session_state:
+    st.session_state.cooldown_until = 0
+
 if "sims" not in st.session_state:
     st.session_state.sims = {}
     for i in range(NUM_TABS):
@@ -107,6 +114,7 @@ def start_simulation(tab_id):
     script_path = str(project_root / "examples" / "train.py")
     
     cmd = [
+        "caffeinate", "-i",
         sys.executable, "examples/train.py",
         "--mode", mode_arg, 
         train_arg,
@@ -118,6 +126,9 @@ def start_simulation(tab_id):
         "--activation", sim["hp"]["activation"],
         "--dataset", DATASET_OPTIONS[sim["hp"]["dataset"]]["cli"],
         "--ent-coef", str(sim["hp"].get("ent_coef", 0.05)),
+        "--gamma", str(sim["hp"].get("gamma", 0.99)),
+        "--gae-lambda", str(sim["hp"].get("gae_lambda", 0.95)),
+        "--delta-multiplier", str(sim["hp"].get("delta_multiplier", 0.0)),
         "--episode-steps", str(sim["hp"].get("episode_steps", 20)),
         "--reward-scale", str(sim["hp"].get("reward_scale", 100.0)),
         "--landscape-amplification", str(sim["hp"].get("landscape_amplification", 1.0)),
@@ -227,6 +238,7 @@ def update_logs_for_sim(tab_id):
                 
             sim["logs"] += f"\n\n--- PROCESS EXITED with code {exit_code} ---\n"
             sim["process"] = None
+            st.session_state.cooldown_until = time.time() + st.session_state.cooldown_seconds
             changed = True
             
             if exit_code == 0:
@@ -1074,6 +1086,27 @@ active_tab = st.radio(
     key="active_sim_tab"
 )
 
+def get_auto_signature(hp):
+    ds_cli = DATASET_OPTIONS[hp["dataset"]]["cli"]
+    if ds_cli == "four_state": ds = "fourstate"
+    elif ds_cli == "chen": ds = "chen"
+    else: ds = f"synthetic_N{hp['n_mut']}"
+    
+    def fmt_e(val):
+        if val == 0: return "0"
+        s = f"{val:.1e}"
+        return s.replace(".0e", "e").replace("e-0", "e-").replace("e+0", "e+")
+
+    lr = f"{fmt_e(hp['lr'])}LR"
+    mr = f"{fmt_e(hp['mutation_rate'])}MR"
+    gps = f"{hp['gen_per_step']}gps"
+    steps = f"{hp.get('episode_steps', 20)}st"
+    batch = f"{hp['batch_size']}b"
+    epochs = f"{hp['epochs']}ep"
+    rs = "randomstart" if hp.get("random_start", True) else "norandomstart"
+    
+    return f"{ds}_{lr}_{mr}_{gps}_{steps}_{batch}_{epochs}_{rs}"
+
 def render_tab_content(tab_id):
     sim = st.session_state.sims[tab_id]
     
@@ -1104,9 +1137,21 @@ def render_tab_content(tab_id):
             
         with cols_top[4]:
              can_run = not sim["train"] or (sim["train"] and sim.get("signature", "").strip() != "")
-             if not sim["running"]:
-                if st.button("🚀 RUN", key=f"run_btn_{tab_id}", use_container_width=True, type="primary", disabled=not can_run):
-                    start_simulation(tab_id)
+             any_running = any(s["running"] for s in st.session_state.sims.values())
+             is_queued = tab_id in st.session_state.run_queue
+             
+             if not sim["running"] and not is_queued:
+                btn_text = "🚀 ENQUEUE" if any_running or time.time() < st.session_state.cooldown_until else "🚀 RUN"
+                if st.button(btn_text, key=f"run_btn_{tab_id}", use_container_width=True, type="primary", disabled=not can_run):
+                    if any_running or time.time() < st.session_state.cooldown_until:
+                        st.session_state.run_queue.append(tab_id)
+                        st.toast(f"Simulation {tab_id+1} added to queue", icon="📥")
+                    else:
+                        start_simulation(tab_id)
+                    st.rerun()
+             elif is_queued:
+                if st.button("❌ DEQUEUE", key=f"dequeue_btn_{tab_id}", use_container_width=True, type="secondary"):
+                    st.session_state.run_queue.remove(tab_id)
                     st.rerun()
              else:
                 if st.button("🛑 STOP", key=f"stop_btn_{tab_id}", use_container_width=True, type="secondary"):
@@ -1122,6 +1167,28 @@ def render_tab_content(tab_id):
             if st.button("🗑️ CLEAR", key=f"clear_tab_btn_{tab_id}", use_container_width=True):
                 sim["logs"] = ""
                 st.rerun()
+                
+        # Copy Settings
+        with st.expander("📋 Copy Settings from another Tab"):
+            copy_cols = st.columns([2, 1, 3])
+            with copy_cols[0]:
+                copy_source = st.selectbox("Source Tab", [f"Sim {i+1}" for i in range(NUM_TABS) if i != tab_id], key=f"copy_source_{tab_id}")
+            
+            def do_copy(src_string, target_id):
+                source_id = int(src_string.split(" ")[1]) - 1
+                import copy
+                st.session_state.sims[target_id]["hp"] = copy.deepcopy(st.session_state.sims[source_id]["hp"])
+                st.session_state.sims[target_id]["mode"] = st.session_state.sims[source_id]["mode"]
+                
+                # Delete target widget states so Streamlit forces re-initialization using the copied 'hp' dictionary
+                target_suffix = f"_{target_id}"
+                for key in list(st.session_state.keys()):
+                    if key.endswith(target_suffix) and not key.startswith("copy_source"):
+                        del st.session_state[key]
+
+            with copy_cols[1]:
+                if st.button("Copy Settings", key=f"copy_btn_{tab_id}", use_container_width=True, on_click=do_copy, args=(copy_source, tab_id)):
+                    st.toast(f"Copied settings from {copy_source}!", icon="✅")
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1143,9 +1210,8 @@ def render_tab_content(tab_id):
         sim["train"] = st.checkbox("Enable Training", value=sim["train"], key=f"train_cb_{tab_id}")
         
         if sim["train"]:
-            sim["signature"] = st.text_input("Run Signature", value=sim.get("signature", ""), key=f"sig_input_{tab_id}")
-            if not sim["signature"]:
-                st.caption("⚠️ :red[Run Signature is mandatory for training]")
+            sig_placeholder = st.empty()
+            caption_placeholder = st.empty()
         else:
              mode_arg = MODES[sim["mode"]]
              log_dir = "RL" if mode_arg in ["wf_ls", "wf_ss", "sswm"] else "sswm_dqn"
@@ -1225,6 +1291,9 @@ def render_tab_content(tab_id):
             sim["hp"]["mutation_rate"] = st.number_input("Mutation Rate", 0.0, 1.0, sim["hp"]["mutation_rate"], format="%.1e", key=f"mut_{tab_id}")
             sim["hp"]["gen_per_step"] = st.number_input("Gens per Step", 1, 10000, sim["hp"]["gen_per_step"], key=f"gps_{tab_id}")
             sim["hp"]["ent_coef"] = st.number_input("Entropy Coef.", 0.0, 1.0, sim["hp"].get("ent_coef", 0.05), step=0.01, key=f"ent_{tab_id}", help="Higher = more exploration")
+            sim["hp"]["gamma"] = st.number_input("Discount Factor (gamma)", 0.0, 1.0, sim["hp"].get("gamma", 0.99), step=0.01, key=f"gamma_{tab_id}", help="Discount factor. Higher = longer horizon")
+            sim["hp"]["gae_lambda"] = st.number_input("GAE Lambda", 0.0, 1.0, sim["hp"].get("gae_lambda", 0.95), step=0.01, key=f"gae_{tab_id}", help="GAE lambda. Higher = higher variance, lower bias")
+            sim["hp"]["delta_multiplier"] = st.number_input("Delta Bonus Multiplier", 0.0, 10.0, sim["hp"].get("delta_multiplier", 0.0), step=0.1, key=f"delta_{tab_id}", help="Rewards immediate fitness drops. Set to 0.0 to allow RL to sacrifice short-term fitness for long-term payoffs (avoids greedy trap).")
             sim["hp"]["episode_steps"] = st.number_input("Episode Steps", 1, 1000000, sim["hp"].get("episode_steps", 20), key=f"ep_steps_{tab_id}", help="Number of steps per episode")
             sim["hp"]["reward_scale"] = st.number_input("Reward Scale", 0.1, 10000.0, sim["hp"].get("reward_scale", 100.0), step=10.0, key=f"reward_scale_{tab_id}", help="Scale for rewards (recommended 100 for WF)")
             sim["hp"]["random_start"] = st.checkbox("Random Start", value=sim["hp"].get("random_start", True), key=f"rstart_{tab_id}", help="Start each episode from a random genotype instead of all-zeros")
@@ -1251,6 +1320,22 @@ def render_tab_content(tab_id):
         
         st.markdown('</div>', unsafe_allow_html=True)
     
+    current_auto_sig = get_auto_signature(sim["hp"])
+    
+    if sim.get("last_auto_sig") != current_auto_sig:
+        sim["signature"] = current_auto_sig
+        sim["last_auto_sig"] = current_auto_sig
+        # Force Streamlit to update the widget's internal state
+        st.session_state[f"sig_input_{tab_id}"] = current_auto_sig
+        
+    if sim["train"]:
+        new_sig = sig_placeholder.text_input("Run Signature", value=sim["signature"], key=f"sig_input_{tab_id}")
+        if new_sig != sim["signature"]:
+            sim["signature"] = new_sig
+            
+        if not sim["signature"]:
+            caption_placeholder.caption("⚠️ :red[Run Signature is mandatory for training]")
+
     # Status indicator
     render_status_logic(tab_id)
     
@@ -1260,6 +1345,53 @@ def render_tab_content(tab_id):
 
 # Render only the active tab's content
 render_tab_content(active_tab)
+
+# --- Queue Daemon & Sidebar ---
+with st.sidebar:
+    st.header("⏱️ Queue Manager")
+    st.session_state.cooldown_seconds = st.number_input("Cooldown (seconds)", min_value=0, value=st.session_state.cooldown_seconds, help="Wait time between simulations to prevent overheating.")
+    
+    if st.session_state.cooldown_until > time.time():
+        rem = int(st.session_state.cooldown_until - time.time())
+        st.warning(f"Cooldown active: {rem}s remaining")
+    
+    st.subheader("Current Queue")
+    if not st.session_state.run_queue:
+        st.info("Queue is empty.")
+    else:
+        for i, q_tab in enumerate(st.session_state.run_queue):
+            st.write(f"{i+1}. Simulation {q_tab+1}")
+        if st.button("Clear Queue", use_container_width=True):
+            st.session_state.run_queue = []
+            st.rerun()
+            
+    st.subheader("Batch Operations")
+    if st.button("Queue All Configured", use_container_width=True, type="primary"):
+        for i in range(NUM_TABS):
+            s = st.session_state.sims[i]
+            can_run = not s["train"] or (s["train"] and s.get("signature", "").strip() != "")
+            if can_run and not s["running"] and i not in st.session_state.run_queue:
+                st.session_state.run_queue.append(i)
+        st.rerun()
+
+@st.fragment(run_every=5)
+def queue_daemon():
+    if not st.session_state.run_queue:
+        return
+        
+    any_running = any(s["running"] for s in st.session_state.sims.values())
+    if any_running:
+        return
+        
+    if time.time() < st.session_state.cooldown_until:
+        return # Still in cooldown
+        
+    # Ready to run next!
+    next_tab = st.session_state.run_queue.pop(0)
+    start_simulation(next_tab)
+    st.rerun()
+
+queue_daemon()
 
 st.divider()
 st.caption("REMARC - Reinforcement-learning based Evolutionary Markovian Resistance Control | support for concurrent executions")

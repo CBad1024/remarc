@@ -16,6 +16,9 @@ class Presets:
     reward_clip: bool = False
     gen_per_step: int = 500
     ent_coef: float = 0.05
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    delta_multiplier: float = 0.0
     episode_steps: int = 20
     reward_scale: float = 100.0
     random_start: bool = True
@@ -137,7 +140,7 @@ class Presets:
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
-            episode_steps=20,
+            episode_steps=100,
             reward_scale=100.0,
             random_start=True
         )
