@@ -604,6 +604,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="REMARC Runner")
     parser.add_argument("--mode", type=str, choices=["wf_ls"], default="wf_ls")
     parser.add_argument('--eval-shepherd', action='store_true', help='Evaluate SHEPHERD baseline')
+    parser.add_argument('--no-shepherd', action='store_false', dest='eval_shepherd', help='Do not evaluate SHEPHERD baseline')
     parser.add_argument('--shepherd-resolution', type=int, default=3, help='Lattice resolution L for SHEPHERD exact MDP solver')
     parser.add_argument("--train", action="store_true", help="Train before evaluation")
     parser.add_argument("--no-train", action="store_false", dest="train", help="Skip training (only evaluation)")

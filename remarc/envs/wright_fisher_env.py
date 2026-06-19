@@ -242,7 +242,9 @@ class WrightFisherEnv(gym.Env):
         # Delta bonus: reward the agent for *reducing* fitness vs previous step.
         if self.prev_step_fitness is not None:
             delta = self.prev_step_fitness - avg_fit  # positive when fitness drops
-            reward += delta * self.reward_scale * 0.5
+            # Restore a balanced delta bonus. 
+            # 1.0 multiplier gives it equal weight to the absolute fitness.
+            reward += delta * self.reward_scale * 1.0
         self.prev_step_fitness = avg_fit
 
         terminated = self.generation >= self.total_generations
@@ -252,6 +254,7 @@ class WrightFisherEnv(gym.Env):
         if terminated:
             # Terminal bonus: reward sustained low fitness over the episode
             final_avg_fit = np.mean(self.fit_trajectory[-20:])
+            # Restore to standard 10x multiplier to prevent gradient explosion
             reward += (1 - final_avg_fit) * self.reward_scale * 10
 
         return obs, reward, terminated, truncated, info

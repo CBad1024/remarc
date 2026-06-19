@@ -760,7 +760,9 @@ def plot_baseline_comparison(tab_id):
                             mutation_rate=sim["hp"].get("mutation_rate", 1e-4),
                             gen_per_step=sim["hp"].get("gen_per_step", 500),
                             num_drugs=len(landscapes_array),
-                            landscape_list=landscape_objs
+                            landscape_list=landscape_objs,
+                            random_start=sim["hp"].get("random_start", True),
+                            stochastic=sim["hp"].get("stochastic", True)
                         )
                         env_setup_ok = True
                     elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "chen":
@@ -775,7 +777,9 @@ def plot_baseline_comparison(tab_id):
                             mutation_rate=sim["hp"].get("mutation_rate", 1e-4),
                             gen_per_step=sim["hp"].get("gen_per_step", 500),
                             num_drugs=len(landscapes_array),
-                            landscape_list=landscape_objs
+                            landscape_list=landscape_objs,
+                            random_start=sim["hp"].get("random_start", True),
+                            stochastic=sim["hp"].get("stochastic", True)
                         )
                         env_setup_ok = True
                     
