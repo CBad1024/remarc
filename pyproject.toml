@@ -26,6 +26,8 @@ dependencies = [
     "plotly>=6.6.0",
     "streamlit>=1.30.0",
     "pymdptoolbox>=4.0b3",
+    "setuptools<71",
+    "optuna>=4.9.0",
 ]
 
 [project.optional-dependencies]

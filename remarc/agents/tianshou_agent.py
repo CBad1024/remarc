@@ -6,6 +6,7 @@ import pickle
 from pathlib import Path
 
 import numpy as np
+import optuna
 import torch
 import torch.nn as nn
 from tianshou.data import Collector, VectorReplayBuffer, Batch
@@ -274,7 +275,7 @@ def save_run_params(p: P, signature: str | None):
     print(f"Run parameters saved to: {filename}")
 
 
-def train_wf_landscapes(p: P, signature: str | None = None):
+def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial | None" = None):
     # --- Save params before anything else ---
     save_run_params(p, signature)
 
@@ -388,6 +389,11 @@ def train_wf_landscapes(p: P, signature: str | None = None):
             if stats.returns_stat:
                 metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
             log_policy_snapshot(sig, policy, 2**v_N)
+            
+            if trial is not None:
+                trial.report(stats.returns_stat.mean, epoch)
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
 
     def train_fn(epoch, env_step):
         # Delay entropy decay so agent explores longer
@@ -444,6 +450,8 @@ def train_wf_landscapes(p: P, signature: str | None = None):
             "test_length": test_result.lens_stat.mean
         }
     )
+    
+    return test_result.returns_stat.mean
 
 
 # ---------------------------------------------------------------------------

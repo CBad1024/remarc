@@ -1,4 +1,4 @@
-.PHONY: dashboard export-onnx run-client compare-models tensorboard
+.PHONY: dashboard export-onnx run-client compare-models tensorboard optimize
 
 # ==========================================
 # Configuration Variables
@@ -16,6 +16,13 @@ dashboard: ## Launch the Streamlit dashboard
 tensorboard: ## Launch the TensorBoard server
 	uv run tensorboard --logdir log/tensorboard
 
+optimize: ## Run the Optuna hyperparameter search
+	caffeinate -i uv run python examples/optimize.py
+
+dash_tb: ## Launch the Streamlit dashboard and TensorBoard
+	uv run streamlit run examples/dashboard.py &
+	uv run tensorboard --logdir log/tensorboard
+
 export-onnx: ## Export the RL policy to ONNX format
 	uv run python examples/export_model.py --policy $(POLICY) --hidden-sizes $(HIDDEN_SIZES) --actor-sizes $(ACTOR_SIZES)
 
@@ -24,3 +31,4 @@ run-client: ## Run the lightweight ONNX client for inference testing
 
 compare-models: ## Visually compare Baseline vs ONNX models in simulation
 	uv run python examples/compare_models.py --policy $(POLICY) --steps $(STEPS) --gen-per-step $(GEN_PER_STEP)
+
