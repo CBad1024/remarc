@@ -2,6 +2,12 @@ import optuna
 from pathlib import Path
 import sys
 import os
+
+# CRITICAL: Prevent PyTorch from causing massive CPU thrashing during multiprocessing
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
 import logging
 import time
 import datetime
