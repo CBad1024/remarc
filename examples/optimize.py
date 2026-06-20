@@ -1,6 +1,7 @@
 import optuna
 from pathlib import Path
 import sys
+import os
 import logging
 import time
 import datetime
@@ -89,6 +90,19 @@ if __name__ == "__main__":
     optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
     study_name = "wf_landscapes_optimization"
     
+    # Check for Cloud DB URL
+    db_url = os.environ.get("OPTUNA_DB_URL")
+    if db_url:
+        storage_url = db_url
+        safe_print_url = db_url.split('@')[1] if '@' in db_url else 'cloud database'
+        print(f"Connecting to Cloud Postgres DB at {safe_print_url}...")
+    else:
+        # Local SQLite fallback
+        db_path = project_root / "log" / "optuna_study.db"
+        db_path.parent.mkdir(exist_ok=True)
+        storage_url = f"sqlite:///{db_path}"
+        print(f"Connecting to local SQLite DB at {db_path}...")
+    
     # Set up median pruner
     pruner = optuna.pruners.MedianPruner(
         n_startup_trials=5,
@@ -98,15 +112,17 @@ if __name__ == "__main__":
     
     study = optuna.create_study(
         study_name=study_name,
+        storage=storage_url,
+        load_if_exists=True,
         direction="maximize",
         pruner=pruner
     )
     
     print(f"Starting Optuna optimization for Wright-Fisher landscapes...")
     
-    total_trials = 100
-    cooldown = 60
-    study.optimize(objective, n_trials=total_trials, callbacks=[ETACallback(total_trials, cooldown)])
+    total_trials = 1000
+    cooldown = 0
+    study.optimize(objective, n_trials=total_trials, n_jobs=32, callbacks=[ETACallback(total_trials, cooldown)])
     
     print("\nOptimization finished.")
     print("Best trial:")

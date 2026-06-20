@@ -28,6 +28,7 @@ dependencies = [
     "pymdptoolbox>=4.0b3",
     "setuptools<71",
     "optuna>=4.9.0",
+    "psycopg2-binary>=2.9.12",
 ]
 
 [project.optional-dependencies]
