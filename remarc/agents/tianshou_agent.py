@@ -433,6 +433,8 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         stop_fn=lambda mean_rewards: None,
         save_best_fn=save_best_v2,
         logger=wrapped_logger,
+        verbose=False,
+        show_progress=False,
     )
     result = drug_trainer.run()
     print(f"Drug Cycling Training finished with result: {result}")
