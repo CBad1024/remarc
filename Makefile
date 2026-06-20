@@ -17,7 +17,7 @@ tensorboard: ## Launch the TensorBoard server
 	uv run tensorboard --logdir log/tensorboard
 
 optimize: ## Run the Optuna hyperparameter search
-	caffeinate -i uv run python examples/optimize.py
+	uv run python examples/optimize.py
 
 dash_tb: ## Launch the Streamlit dashboard and TensorBoard
 	uv run streamlit run examples/dashboard.py &

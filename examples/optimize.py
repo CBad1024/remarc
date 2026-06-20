@@ -67,7 +67,9 @@ def objective(trial):
             logging.error(f"Trial {trial.number} failed at seed {seed} with exception: {e}")
             raise e
             
-    return sum(rewards) / len(rewards)
+    mean_reward = sum(rewards) / len(rewards)
+    logging.info(f"Trial {trial.number} Completed. Mean Reward: {mean_reward}")
+    return mean_reward
 
 
 
@@ -102,11 +104,18 @@ if __name__ == "__main__":
         storage_url = db_url
         safe_print_url = db_url.split('@')[1] if '@' in db_url else 'cloud database'
         print(f"Connecting to Cloud Postgres DB at {safe_print_url}...")
+        
+        from sqlalchemy.pool import NullPool
+        storage_backend = optuna.storages.RDBStorage(
+            url=storage_url,
+            engine_kwargs={"poolclass": NullPool, "pool_pre_ping": True}
+        )
     else:
         # Local SQLite fallback
         db_path = project_root / "log" / "optuna_study.db"
         db_path.parent.mkdir(exist_ok=True)
         storage_url = f"sqlite:///{db_path}"
+        storage_backend = storage_url
         print(f"Connecting to local SQLite DB at {db_path}...")
     
     # Set up median pruner
@@ -118,7 +127,7 @@ if __name__ == "__main__":
     
     study = optuna.create_study(
         study_name=study_name,
-        storage=storage_url,
+        storage=storage_backend,
         load_if_exists=True,
         direction="maximize",
         pruner=pruner
