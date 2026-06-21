@@ -128,6 +128,27 @@ def define_four_state_landscapes(as_dict=False, amplification=1.0):
         return {name: list(row) for name, row in zip(drug_names, raw)}
     return raw
 
+def define_trap_landscapes(as_dict=False, amplification=1.0):
+    """
+    Trap fitness landscapes for 4 genotypes (N=2) and 4 drugs.
+    Scaled similarly to four-state around ~1.0 with ~0.015 deviations.
+    """
+    raw = np.array([
+        [0.991, 1.005, 0.998, 1.008], # Drug 0 (Greedy Trap)
+        [1.002, 0.992, 1.005, 1.009], # Drug 1 
+        [0.998, 0.995, 1.002, 1.008], # Drug 2 (RL Setup)
+        [1.005, 1.006, 0.991, 1.008], # Drug 3 (RL Finisher)
+    ])
+    
+    if amplification != 1.0:
+        mean = raw.mean()
+        raw = mean + (raw - mean) * amplification
+    
+    if as_dict:
+        drug_names = ['Drug_A', 'Drug_B', 'Drug_C', 'Drug_D']
+        return {name: list(row) for name, row in zip(drug_names, raw)}
+    return raw
+
 def define_successful_landscapes():
     return np.array([[1.20506869, 3.35382954, 0.32273345, 0.29391833],
      [3.99748972, 0.5007246, 1.94397629, 0.66432379],
