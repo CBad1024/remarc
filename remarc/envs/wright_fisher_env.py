@@ -299,14 +299,15 @@ class WrightFisherEnv(gym.Env):
     @classmethod
     def getEnv(cls, n_train, n_test, landscape_list=None, num_drugs=10,
                gen_per_step=25, seq_length=4, random_start=False,
-               episode_steps=20, reward_scale=1.0, stochastic=True, delta_multiplier=0.0):
+               episode_steps=20, reward_scale=1.0, stochastic=True, delta_multiplier=0.0,
+               mutation_rate=1e-4):
         total_generations = gen_per_step * episode_steps
         fn_train = functools.partial(
             _make_env_train, landscape_list, num_drugs, gen_per_step,
-            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier)
+            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate)
         fn_test = functools.partial(
             _make_env_test, landscape_list, num_drugs, gen_per_step,
-            seq_length, total_generations, reward_scale, stochastic, delta_multiplier)
+            seq_length, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate)
         train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
         test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
@@ -334,21 +335,23 @@ class ThreeGenotypeEnv(WrightFisherEnv):
 # --------------------------------------------------------------------------
 
 def _make_env_train(landscape_list, num_drugs, gen_per_step, seq_length,
-                    random_start, total_generations, reward_scale, stochastic, delta_multiplier):
+                    random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=random_start, total_generations=total_generations,
-        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier)
+        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
+        mutation_rate=mutation_rate)
 
 
 def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
-                   total_generations, reward_scale, stochastic, delta_multiplier):
+                   total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=False, total_generations=total_generations,
-        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier)
+        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
+        mutation_rate=mutation_rate)
 
 
 

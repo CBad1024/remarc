@@ -318,6 +318,20 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         for i in range(num_drugs):
             landscape_list.append(Landscape(v_N, sigma=0.0, ls=four_state_data[i], g_min=g_min, g_max=g_max))
 
+    elif hasattr(p, "dataset") and p.dataset == "trap":
+        from remarc.envs import define_trap_landscapes
+        amp = getattr(p, "landscape_amplification", 1.0)
+        print(f"Using Trap landscapes for Wright-Fisher training (amplification={amp:.1f}).")
+        v_N = 2
+        trap_data = define_trap_landscapes(amplification=amp)
+        num_drugs = len(trap_data)
+
+        g_min, g_max = np.min(trap_data), np.max(trap_data)
+        print(f"Trap Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
+
+        for i in range(num_drugs):
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=trap_data[i], g_min=g_min, g_max=g_max))
+
     else:
         print("Using synthetic random landscapes for Wright-Fisher training.")
         num_drugs = 10
@@ -340,6 +354,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         reward_scale=getattr(p, "reward_scale", 100.0),
         stochastic=getattr(p, "stochastic", True),
         delta_multiplier=getattr(p, "delta_multiplier", 0.0),
+        mutation_rate=getattr(p, "mutation_rate", 1e-4),
     )
 
     print("Saving testing environments to testing_envs.pkl")
