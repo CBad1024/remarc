@@ -24,6 +24,7 @@ class Presets:
     random_start: bool = True
     landscape_amplification: float = 1.0
     stochastic: bool = True
+    n_frames: int = 1
 
     @staticmethod
     def p1_ss():
@@ -143,4 +144,25 @@ class Presets:
             episode_steps=100,
             reward_scale=100.0,
             random_start=True
+        )
+
+    @staticmethod
+    def p_four_state_stacked():
+        return Presets(
+            state_shape=(12,),
+            num_actions=4,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=4000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="four_state",
+            activation="relu",
+            reward_clip=False,
+            ent_coef=0.05,
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True,
+            n_frames=3
         )

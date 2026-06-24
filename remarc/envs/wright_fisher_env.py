@@ -5,6 +5,7 @@ import itertools
 import functools
 from tianshou.env import DummyVectorEnv, SubprocVectorEnv
 from ..core.landscapes import Landscape
+import collections
 
 
 class WrightFisherEnv(gym.Env):
@@ -49,7 +50,7 @@ class WrightFisherEnv(gym.Env):
     def __init__(self, pop_size=10000, seq_length=4, mutation_rate=1e-4,
                  gen_per_step=500, total_generations=1000, num_drugs=10,
                  random_start=False, landscape_list=None, reward_scale=1.0,
-                 stochastic=True, delta_multiplier=1.0):
+                 stochastic=True, delta_multiplier=1.0, n_frames=1):
         super(WrightFisherEnv, self).__init__()
         self.pop_size = pop_size
         self.seq_length = seq_length
@@ -60,6 +61,8 @@ class WrightFisherEnv(gym.Env):
         self.stochastic = stochastic
         self.delta_multiplier = delta_multiplier
         self.fit_trajectory = []
+        self.n_frames = n_frames
+        self.frames = collections.deque(maxlen=n_frames) # stacks previous experiences for better signal
 
         # --- Genotype bookkeeping ---
         self.num_genotypes = 2 ** self.seq_length
@@ -79,7 +82,7 @@ class WrightFisherEnv(gym.Env):
 
         # --- Spaces ---
         self.action_space = spaces.Discrete(self.num_drugs)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(self.num_genotypes,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.num_genotypes * self.n_frames,), dtype=np.float32)
 
         # --- Pre-compute mutation matrix U (column-stochastic, Hamming-1) ---
         self.mutation_matrix = self._build_mutation_matrix()
@@ -133,12 +136,18 @@ class WrightFisherEnv(gym.Env):
         self.prev_step_fitness = None  # Track step-to-step changes
         super().reset(seed=seed)
 
+        
+
+
         self.freqs = np.zeros(self.num_genotypes)
         if self.random_start:
             idx = np.random.randint(self.num_genotypes)
             self.freqs[idx] = 1.0
         else:
             self.freqs[0] = 1.0  # All mass on wildtype (00...0)
+        
+        self.frames.clear()
+        [self.frames.append(self.freqs.copy()) for _ in range(self.n_frames)]
 
         self.generation = 0
         self.current_drug = 0
@@ -151,7 +160,7 @@ class WrightFisherEnv(gym.Env):
     # ------------------------------------------------------------------
 
     def _get_obs(self):
-        return self.freqs.astype(np.float32)
+        return np.concatenate(self.frames).astype(np.float32)
 
     def get_obs(self):
         """Public alias for _get_obs(); returns current genotype frequency vector."""
@@ -233,14 +242,18 @@ class WrightFisherEnv(gym.Env):
             if self.generation >= self.total_generations:
                 break
 
+        # Replace the first frame with the current frame     
+        self.frames.popleft()
+        self.frames.append(self.freqs.copy())
+        
         obs = self._get_obs()
         avg_fit = self.avg_fitness()
         self.fit_trajectory.append(avg_fit)
 
-        # --- Reward: lower fitness = better drug efficacy ---
+        # --- Reward lower fitness ---
         reward = (1 - avg_fit) * self.reward_scale
 
-        # Delta bonus: reward the agent for *reducing* fitness vs previous step.
+        # Delta bonus: reward the agent for reducing fitness vs previous step.
         if self.prev_step_fitness is not None:
             delta = self.prev_step_fitness - avg_fit  # positive when fitness drops
             # Restore a balanced delta bonus. 
@@ -300,14 +313,14 @@ class WrightFisherEnv(gym.Env):
     def getEnv(cls, n_train, n_test, landscape_list=None, num_drugs=10,
                gen_per_step=25, seq_length=4, random_start=False,
                episode_steps=20, reward_scale=1.0, stochastic=True, delta_multiplier=0.0,
-               mutation_rate=1e-4):
+               mutation_rate=1e-4, n_frames=1):
         total_generations = gen_per_step * episode_steps
         fn_train = functools.partial(
             _make_env_train, landscape_list, num_drugs, gen_per_step,
-            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate)
+            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames)
         fn_test = functools.partial(
             _make_env_test, landscape_list, num_drugs, gen_per_step,
-            seq_length, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate)
+            seq_length, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames)
         train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
         test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
@@ -335,23 +348,23 @@ class ThreeGenotypeEnv(WrightFisherEnv):
 # --------------------------------------------------------------------------
 
 def _make_env_train(landscape_list, num_drugs, gen_per_step, seq_length,
-                    random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate):
+                    random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=random_start, total_generations=total_generations,
         reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
-        mutation_rate=mutation_rate)
+        mutation_rate=mutation_rate, n_frames=n_frames)
 
 
 def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
-                   total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate):
+                   total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=False, total_generations=total_generations,
         reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
-        mutation_rate=mutation_rate)
+        mutation_rate=mutation_rate, n_frames=n_frames)
 
 
 

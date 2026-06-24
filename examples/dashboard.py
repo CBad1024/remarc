@@ -599,9 +599,16 @@ def plot_simplex_section(tab_id):
                                 num_drugs=len(landscapes),
                                 landscape_list=landscape_objs
                             )
-                            shepherd_mdp = ShepherdMDP.from_env(dummy_env, L=current_L, discount=0.99)
-                            shepherd_mdp.solve()
                             
+                            cache_path = project_root / 'log' / f'shepherd_L{current_L}.npz'
+                            shepherd_mdp = ShepherdMDP.from_env(dummy_env, L=current_L, discount=0.99)
+                            
+                            if cache_path.exists():
+                                shepherd_mdp.load(cache_path)
+                            else:
+                                shepherd_mdp.solve()
+                                shepherd_mdp.save(cache_path)
+                                
                             def s_fn(state):
                                 return shepherd_mdp.get_action(state)
                                 

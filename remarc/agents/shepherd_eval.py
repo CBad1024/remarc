@@ -329,6 +329,7 @@ class ShepherdMDP:
         R = np.zeros((self.N_states, len(self.actions)), dtype=float)
 
         for a in self.actions:
+            print(f"Computing transition matrix for action {a+1} of {len(self.actions)}...")
             # Build sparse generator Ω(a)
             Omega = self.build_transition_rate_matrix(a)
             # Sparse expm + normalize
@@ -364,6 +365,20 @@ class ShepherdMDP:
         self.policy = np.array(vi.policy)
         self.value = np.array(vi.V)
         return self.policy, self.value
+
+    def save(self, filepath):
+        """Save the solved policy and value function to a numpy archive."""
+        if self.policy is None or self.value is None:
+            raise RuntimeError("Cannot save an unsolved MDP.")
+        np.savez(filepath, policy=self.policy, value=self.value, L=self.L, d=self.d)
+
+    def load(self, filepath):
+        """Load a solved policy and value function from a numpy archive."""
+        data = np.load(filepath)
+        if data['L'] != self.L or data['d'] != self.d:
+            raise ValueError(f"Loaded policy shape (L={data['L']}, d={data['d']}) does not match current MDP parameters (L={self.L}, d={self.d}).")
+        self.policy = data['policy']
+        self.value = data['value']
 
     # ------------------------------------------------------------------
     # Policy query

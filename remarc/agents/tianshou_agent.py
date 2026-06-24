@@ -162,7 +162,7 @@ class LossCapturingLogger(BaseLogger):
 # Policy snapshot logging
 # ---------------------------------------------------------------------------
 
-def log_policy_snapshot(signature: str, policy, n_states: int):
+def log_policy_snapshot(signature: str, policy, n_states: int, n_frames: int = 1):
     """Serialize current policy Q-values / action logits to a JSON file for the dashboard."""
     if not signature:
         return
@@ -171,7 +171,9 @@ def log_policy_snapshot(signature: str, policy, n_states: int):
     os.makedirs(log_dir, exist_ok=True)
     filename = os.path.join(log_dir, f"{signature}_live.json")
 
-    state_tensor = torch.FloatTensor(np.identity(n_states))
+    identity_states = np.identity(n_states)
+    stacked_states = np.tile(identity_states, (1, n_frames))
+    state_tensor = torch.FloatTensor(stacked_states)
 
     with torch.no_grad():
         if hasattr(policy, "actor"):  # PPO
@@ -204,8 +206,9 @@ def load_best_policy(p: P, filename: str = "best_policy.pth", env_type: str = "w
     # testing_envs.pkl, which is overwritten by every training run and
     # may have a different obs_shape than the checkpoint being loaded.
     import math
-    seq_length = int(math.log2(p.state_shape[0]))
-    env = WrightFisherEnv(seq_length=seq_length, num_drugs=p.num_actions)
+    n_frames = getattr(p, "n_frames", 1)
+    seq_length = int(math.log2(p.state_shape[0] // n_frames))
+    env = WrightFisherEnv(seq_length=seq_length, num_drugs=p.num_actions, n_frames=n_frames)
     test_envs = DummyVectorEnv([lambda: env])
     policy = get_ppo_policy(p, test_envs).eval()
     policy = load_best_fn(policy, filename)
@@ -285,7 +288,8 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         np.random.seed(seed)
         torch.manual_seed(seed)
 
-    v_N = int(np.log2(p.state_shape[0]))
+    n_frames = getattr(p, "n_frames", 1)
+    v_N = int(np.log2(p.state_shape[0] // n_frames))
 
     from ..core.landscapes import Landscape
 
@@ -345,7 +349,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
 
     print(f"Number of drugs: {len(landscape_list)}")
     train_envs, test_envs = WrightFisherEnv.getEnv(
-        4, 2,
+        getattr(p, "n_train_envs", 4), getattr(p, "n_test_envs", 2),
         landscape_list=landscape_list,
         gen_per_step=getattr(p, "gen_per_step", 500),
         seq_length=v_N,
@@ -355,6 +359,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         stochastic=getattr(p, "stochastic", True),
         delta_multiplier=getattr(p, "delta_multiplier", 0.0),
         mutation_rate=getattr(p, "mutation_rate", 1e-4),
+        n_frames=n_frames,
     )
 
     print("Saving testing environments to testing_envs.pkl")
@@ -369,7 +374,8 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
             total_generations=total_gens,
             reward_scale=getattr(p, "reward_scale", 100.0), 
             stochastic=getattr(p, "stochastic", True),
-            delta_multiplier=getattr(p, "delta_multiplier", 0.0)
+            delta_multiplier=getattr(p, "delta_multiplier", 0.0),
+            n_frames=n_frames
         ) for _ in range(2)
     ]
     with open(os.path.join(log_path, "testing_envs.pkl"), "wb") as f:
@@ -388,7 +394,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         torch.save(policy.state_dict(), os.path.join(log_path, filename))
         print(f"Best policy saved to: {os.path.join(log_path, filename)}")
 
-    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
+    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, len(train_envs)))
     test_collector = Collector(policy, test_envs)
 
     # Warm-up collection before training begins
@@ -409,7 +415,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
             stats = test_collector.collect(n_episode=eval_eps)
             if stats.returns_stat:
                 metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
-            log_policy_snapshot(sig, policy, 2**v_N)
+            log_policy_snapshot(sig, policy, 2**v_N, n_frames)
             
             if trial is not None:
                 norm_reward = stats.returns_stat.mean / getattr(p, "reward_scale", 1.0)
