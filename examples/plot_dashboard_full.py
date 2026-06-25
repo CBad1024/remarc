@@ -10,7 +10,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from remarc.core.hyperparameters import Presets as P
-from remarc.agents.tianshou_agent import get_ppo_policy, load_best_fn, RandomPolicy
+from remarc.agents.tianshou_agent import get_ppo_policy, load_best_fn, RandomPolicy, SingleDrugPolicy
 from remarc.envs.wright_fisher_env import WrightFisherEnv
 from remarc.agents.greedy_agent import GreedyAgent
 from remarc.envs.utils import define_four_state_landscapes
@@ -28,7 +28,7 @@ from examples.plotting import (
     greedy_policy
 )
 
-def run_eval(env, policy, agent_type="RL", num_runs=10, episode_steps=1000):
+def run_eval(env, policy, agent_type="RL", num_runs=10, episode_steps=1000, drug_idx = 0): # DRUG INDEX NOT USED UNLESS SINGLE DRUG POLICY
     all_fit = []
     all_states = []
     
@@ -41,6 +41,8 @@ def run_eval(env, policy, agent_type="RL", num_runs=10, episode_steps=1000):
             agent = GreedyAgent(env.drug_landscapes)
         elif agent_type == "Random":
             agent = RandomPolicy(env.num_drugs)
+        elif agent_type == "Single Drug":
+            agent = SingleDrugPolicy(drug_idx)
         else:
             agent = policy
 
@@ -87,7 +89,7 @@ def main():
     REWARD_SCALE  = 100.0
     AMP           = 1.0
     EVAL_STEPS    = 1000
-    EVAL_RUNS     = 100
+    EVAL_RUNS     = 500
     n_frames      = 1
     delta         = 1.0
     gps           = 10
@@ -135,7 +137,7 @@ def main():
         num_drugs=num_drugs,
         gen_per_step=gps,
         seq_length=v_N,
-        random_start=True, # Averaging over 100 trials, usually we want random start for the density
+        random_start=False, 
         total_generations=gps * EVAL_STEPS + 100,
         reward_scale=REWARD_SCALE,
         stochastic=True,
@@ -168,11 +170,10 @@ def main():
     gr_m, gr_std, gr_states = run_eval(eval_env, None, "Greedy", EVAL_RUNS, EVAL_STEPS)
     rn_m, rn_std, rn_states = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
     sh_m, sh_std, sh_states = run_eval(eval_env, shepherd_fn, "Shepherd", EVAL_RUNS, EVAL_STEPS)
-    
-    single_drug_results = []
-    for d in range(num_drugs):
-        dm, ds, _ = run_eval(eval_env, None, d, EVAL_RUNS, EVAL_STEPS)
-        single_drug_results.append((dm, ds))
+    sd1_m, sd1_std, sd1_states = run_eval(eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx = 0)
+    sd2_m, sd2_std, sd2_states = run_eval(eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx = 1)
+    sd3_m, sd3_std, sd3_states = run_eval(eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx = 2)
+    sd4_m, sd4_std, sd4_states = run_eval(eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx = 3)
 
     # 1. Fitness Trajectories
     print("Plotting Fitness Trajectories...")
@@ -199,13 +200,20 @@ def main():
     plt.fill_between(steps, norm(rl_m) - norm_std(rl_std), norm(rl_m) + norm_std(rl_std), color='#1f77b4', alpha=0.2)
     
     # Single Drugs
-    colors = ['#2ca02c', '#d62728', '#9467bd', '#8c564b']
-    for d, (dm, ds) in enumerate(single_drug_results):
-        plt.plot(steps, norm(dm), color=colors[d], ls='-.', lw=1.5, label=f'Drug {d} Mean', alpha=0.7)
+    colors = ['#FF0000', '#32CD32', '#8A2BE2', '#FF1493']
+    
+    plt.plot(steps, norm(sd1_m), color=colors[0], ls='-.', lw=2.5, label=f'Drug 0 Mean', alpha=1.0)
+    plt.fill_between(steps, norm(sd1_m) - norm_std(sd1_std), norm(sd1_m) + norm_std(sd1_std), color=colors[0], alpha=0.2)
+    plt.plot(steps, norm(sd2_m), color=colors[1], ls='-.', lw=2.5, label=f'Drug 1 Mean', alpha=1.0)
+    plt.fill_between(steps, norm(sd2_m) - norm_std(sd2_std), norm(sd2_m) + norm_std(sd2_std), color=colors[1], alpha=0.2)
+    plt.plot(steps, norm(sd3_m), color=colors[2], ls='-.', lw=2.5, label=f'Drug 2 Mean', alpha=1.0)
+    plt.fill_between(steps, norm(sd3_m) - norm_std(sd3_std), norm(sd3_m) + norm_std(sd3_std), color=colors[2], alpha=0.2)
+    plt.plot(steps, norm(sd4_m), color=colors[3], ls='-.', lw=2.5, label=f'Drug 3 Mean', alpha=1.0)
+    plt.fill_between(steps, norm(sd4_m) - norm_std(sd4_std), norm(sd4_m) + norm_std(sd4_std), color=colors[3], alpha=0.2)
     
     plt.ylim(0, 1)
     plt.grid(True, ls='--', alpha=0.4)
-    plt.title(f"Normalized Fitness Trajectories (100 episodes)\nPolicy: {sig}", fontsize=14, fontweight='bold')
+    plt.title(f"Normalized Fitness Trajectories (500 episodes)\nPolicy: {sig}", fontsize=14, fontweight='bold')
     plt.xlabel("RL Steps", fontsize=12)
     plt.ylabel("Normalized Fitness", fontsize=12)
     plt.legend(fontsize=10, loc='center right', bbox_to_anchor=(1.25, 0.5))

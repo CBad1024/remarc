@@ -241,6 +241,19 @@ class RandomPolicy:
     def eval(self):
         return self
 
+class SingleDrugPolicy:
+    """
+        Policy that always selects a single drug. Wrapper for testing environments.
+    """
+    def __init__(self, drug_idx: int):
+        self.drug_idx = drug_idx
+    def __call__(self, batch, **kwargs):
+        n = len(batch.obs)
+        acts = np.array([self.drug_idx for _ in range(n)])
+        return Batch(act=acts)
+    def eval(self):
+        return self
+
 
 def load_random_policy(p: P):
     """Return a RandomPolicy that samples uniformly from the action space."""
