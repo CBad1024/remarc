@@ -88,8 +88,8 @@ def main():
     EPISODE_STEPS = 500
     REWARD_SCALE  = 100.0
     AMP           = 1.0
-    EVAL_STEPS    = 1000
-    EVAL_RUNS     = 500
+    EVAL_STEPS    = 5000
+    EVAL_RUNS     = 100
     n_frames      = 1
     delta         = 1.0
     gps           = 10
@@ -344,6 +344,27 @@ def main():
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
         plt.close(fig)
 
+
+    #Print out final steady-state fitnesses for Greedy, SHEPHERD, and REMARC and each of the drugs.
+    print("Final Steady State Fitnesses:")
+    print("Greedy:", norm(gr_m[-1]))
+    print("SHEPHERD:", norm(sh_m[-1]))
+    print("REMARC:", norm(rl_m[-1]))
+    print("Single Drug 0:", norm(sd1_m[-1]))
+    print("Single Drug 1:", norm(sd2_m[-1]))
+    print("Single Drug 2:", norm(sd3_m[-1]))
+    print("Single Drug 3:", norm(sd4_m[-1]))
+
+
+    # Also print out the mean fitnesses for each, over all steps.
+    print("Mean Fitnesses:")
+    print("Greedy:", norm(np.mean(gr_m)))
+    print("SHEPHERD:", norm(np.mean(sh_m)))
+    print("REMARC:", norm(np.mean(rl_m)))
+    print("Single Drug 0:", norm(np.mean(sd1_m)))
+    print("Single Drug 1:", norm(np.mean(sd2_m)))
+    print("Single Drug 2:", norm(np.mean(sd3_m)))
+    print("Single Drug 3:", norm(np.mean(sd4_m)))
     print("Done!")
 
 if __name__ == "__main__":

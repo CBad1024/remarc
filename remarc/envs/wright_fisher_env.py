@@ -330,16 +330,51 @@ class WrightFisherEnv(gym.Env):
 
 class ThreeGenotypeEnv(WrightFisherEnv):
     def __init__(self, *args, **kwargs):
+        # Provide a dummy seq_length to the base class if it wasn't provided
+        if 'seq_length' not in kwargs:
+            kwargs['seq_length'] = 2 
         super().__init__(*args, **kwargs)
+        
+        # Override the binary hypercube logic
         self.num_genotypes = 3
+        self.genotypes = ['WT', 'MutA', 'MutB']
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.num_genotypes * self.n_frames,), dtype=np.float32)
+        
+        # Handle 3-state landscapes
+        if kwargs.get('landscape_list') is not None:
+            self.drug_landscapes = np.array([land.ls for land in kwargs['landscape_list']])
+        else:
+            num_drugs = kwargs.get('num_drugs', 10)
+            self.drug_landscapes = np.random.normal(1.0, 0.05, size=(num_drugs, 3))
+            
+        self.mutation_matrix = self._build_mutation_matrix()
+        
+        self.freqs = np.zeros(self.num_genotypes)
+        self.reset()
     
     def _build_mutation_matrix(self):
         mu = self.mutation_rate
         return np.array([
-            [1 - mu, mu, mu],
-            [mu, 1 - mu, mu],
-            [mu, mu, 1 - mu],
+            [1 - 2*mu, mu, mu],
+            [mu, 1 - 2*mu, mu],
+            [mu, mu, 1 - 2*mu],
         ])
+
+    @classmethod
+    def getEnv(cls, n_train, n_test, landscape_list=None, num_drugs=10,
+               gen_per_step=25, random_start=False,
+               episode_steps=20, reward_scale=1.0, stochastic=True, delta_multiplier=0.0,
+               mutation_rate=1e-4, n_frames=1):
+        total_generations = gen_per_step * episode_steps
+        fn_train = functools.partial(
+            _make_three_env_train, landscape_list, num_drugs, gen_per_step,
+            random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames)
+        fn_test = functools.partial(
+            _make_three_env_test, landscape_list, num_drugs, gen_per_step,
+            total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames)
+        train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
+        test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
+        return train_envs, test_envs
 
 
 
@@ -367,5 +402,20 @@ def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
         mutation_rate=mutation_rate, n_frames=n_frames)
 
 
+def _make_three_env_train(landscape_list, num_drugs, gen_per_step,
+                    random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames):
+    return ThreeGenotypeEnv(
+        landscape_list=landscape_list, num_drugs=num_drugs,
+        gen_per_step=gen_per_step,
+        random_start=random_start, total_generations=total_generations,
+        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
+        mutation_rate=mutation_rate, n_frames=n_frames)
 
-
+def _make_three_env_test(landscape_list, num_drugs, gen_per_step,
+                   total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames):
+    return ThreeGenotypeEnv(
+        landscape_list=landscape_list, num_drugs=num_drugs,
+        gen_per_step=gen_per_step,
+        random_start=False, total_generations=total_generations,
+        reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
+        mutation_rate=mutation_rate, n_frames=n_frames)
