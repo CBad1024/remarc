@@ -12,12 +12,13 @@ sys.path.append(str(project_root))
 from remarc.core.hyperparameters import Presets as P
 from remarc.agents.tianshou_agent import get_ppo_policy, load_best_fn, RandomPolicy, SingleDrugPolicy
 from remarc.envs.wright_fisher_env import WrightFisherEnv
-from remarc.agents.greedy_agent import GreedyAgent
-from remarc.envs.utils import define_four_state_landscapes
+from remarc.envs.utils import define_four_state_landscapes, define_three_state_landscapes
 from remarc.core.landscapes import Landscape
 from tianshou.env import DummyVectorEnv
 from tianshou.data import Batch
 from remarc.agents.shepherd_eval import ShepherdMDP
+from remarc.agents.greedy_agent import GreedyAgent
+from remarc.envs.wright_fisher_env import ThreeGenotypeEnv
 
 from examples.plotting import (
     plot_simplex_policy_slices,
@@ -82,7 +83,11 @@ def run_eval(env, policy, agent_type="RL", num_runs=10, episode_steps=1000, drug
     return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_states
 
 def main():
-    LR            = 3e-4
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--arch", type=str, default="256", choices=["32", "64", "128", "256", "baseline"], help="Network architecture size")
+    args = parser.parse_args()
+    LR            = 1e-4
     MR            = 1e-5
     EPOCHS        = 150
     EPISODE_STEPS = 500
@@ -96,14 +101,34 @@ def main():
     gamma         = 0.99
     ent           = 0.1
     batch         = 64
+    DATASET       = "three_state"  # Change to "Three_state" to use 3-state system
+    L             = 30
     
-    sig = f"stacked_f{n_frames}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
+    if args.arch == "baseline":
+        sig = f"{DATASET}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
+    else:
+        sig = f"Three State_net{args.arch}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
 
-    four_state_data = define_four_state_landscapes(amplification=AMP)
-    num_drugs = len(four_state_data)
+    if args.arch == "32":
+        hidden, head = [32, 32], [32]
+    elif args.arch == "64":
+        hidden, head = [64, 64], [64]
+    elif args.arch == "128":
+        hidden, head = [128, 128], [128]
+    elif args.arch == "256":
+        hidden, head = [256, 256, 256], [128]
+    else:
+        hidden, head = [256, 256, 256], [128] # Baseline uses 256 architecture
+
+    if DATASET == "three_state":
+        landscape_data = define_three_state_landscapes(amplification=AMP)
+    else:
+        landscape_data = define_four_state_landscapes(amplification=AMP)
+
+    num_drugs = len(landscape_data)
     v_N = 2
-    g_min, g_max = np.min(four_state_data), np.max(four_state_data)
-    landscape_list = [Landscape(v_N, sigma=0.0, ls=four_state_data[i], g_min=g_min, g_max=g_max)
+    g_min, g_max = np.min(landscape_data), np.max(landscape_data)
+    landscape_list = [Landscape(v_N, sigma=0.0, ls=landscape_data[i], g_min=g_min, g_max=g_max)
                       for i in range(num_drugs)]
 
     p = P(
@@ -119,7 +144,7 @@ def main():
         train_steps_per_epoch=10000,
         reward_scale=REWARD_SCALE,
         gen_per_step=gps,
-        dataset="four_state",
+        dataset=DATASET,
         landscape_amplification=AMP,
         test_episodes=5,
         episode_steps=EPISODE_STEPS,
@@ -131,8 +156,10 @@ def main():
     object.__setattr__(p, 'mutation_rate', MR)
     object.__setattr__(p, 'n_train_envs', 16)
     object.__setattr__(p, 'n_test_envs', 4)
+    object.__setattr__(p, 'hidden_sizes', hidden)
+    object.__setattr__(p, 'head_sizes', head)
 
-    eval_env = WrightFisherEnv(
+    env_kwargs = dict(
         landscape_list=landscape_list,
         num_drugs=num_drugs,
         gen_per_step=gps,
@@ -145,16 +172,20 @@ def main():
         mutation_rate=MR,
         n_frames=n_frames
     )
+    if DATASET == "three_state":
+        eval_env = ThreeGenotypeEnv(**env_kwargs)
+    else:
+        eval_env = WrightFisherEnv(**env_kwargs)
 
     test_envs = DummyVectorEnv([lambda: eval_env])
     policy = get_ppo_policy(p, test_envs).eval()
     policy = load_best_fn(policy, f"best_policy_{sig}.pth")
     
-    shepherd_mdp = ShepherdMDP.from_env(eval_env, L=20, discount=0.99)
-    cache_path = project_root / 'log' / 'shepherd_L20.npz'
+    shepherd_mdp = ShepherdMDP.from_env(eval_env, L=L, discount=0.99)
+    cache_path = project_root / 'log' / f'shepherd_L{L}_{DATASET}.npz'
     
     if cache_path.exists():
-        print("Loading cached SHEPHERD MDP (L=20)...")
+        print(f"Loading cached SHEPHERD MDP (L={L})...")
         shepherd_mdp.load(cache_path)
     else:
         print("Solving Exact SHEPHERD MDP (L=20)...")
@@ -177,49 +208,61 @@ def main():
 
     # 1. Fitness Trajectories
     print("Plotting Fitness Trajectories...")
-    plt.figure(figsize=(12, 8))
-    steps = np.arange(EVAL_STEPS)
     
-    def norm(arr): return (arr - g_min) / (g_max - g_min)
-    def norm_std(arr): return arr / (g_max - g_min)
-    
-    # Random
-    plt.plot(steps, norm(rn_m), color='gray', ls=':', lw=2, label='Random Mean')
-    plt.fill_between(steps, norm(rn_m) - norm_std(rn_std), norm(rn_m) + norm_std(rn_std), color='gray', alpha=0.1)
-    
-    # Greedy
-    plt.plot(steps, norm(gr_m), color='#ff7f0e', ls='--', lw=2.5, label='Greedy Mean')
-    plt.fill_between(steps, norm(gr_m) - norm_std(gr_std), norm(gr_m) + norm_std(gr_std), color='#ff7f0e', alpha=0.2)
-    
-    # SHEPHERD
-    plt.plot(steps, norm(sh_m), color='black', ls='-.', lw=2.5, label='SHEPHERD Mean')
-    plt.fill_between(steps, norm(sh_m) - norm_std(sh_std), norm(sh_m) + norm_std(sh_std), color='black', alpha=0.2)
-    
-    # Learned
-    plt.plot(steps, norm(rl_m), color='#1f77b4', lw=3, label='Learned Mean')
-    plt.fill_between(steps, norm(rl_m) - norm_std(rl_std), norm(rl_m) + norm_std(rl_std), color='#1f77b4', alpha=0.2)
-    
-    # Single Drugs
-    colors = ['#FF0000', '#32CD32', '#8A2BE2', '#FF1493']
-    
-    plt.plot(steps, norm(sd1_m), color=colors[0], ls='-.', lw=2.5, label=f'Drug 0 Mean', alpha=1.0)
-    plt.fill_between(steps, norm(sd1_m) - norm_std(sd1_std), norm(sd1_m) + norm_std(sd1_std), color=colors[0], alpha=0.2)
-    plt.plot(steps, norm(sd2_m), color=colors[1], ls='-.', lw=2.5, label=f'Drug 1 Mean', alpha=1.0)
-    plt.fill_between(steps, norm(sd2_m) - norm_std(sd2_std), norm(sd2_m) + norm_std(sd2_std), color=colors[1], alpha=0.2)
-    plt.plot(steps, norm(sd3_m), color=colors[2], ls='-.', lw=2.5, label=f'Drug 2 Mean', alpha=1.0)
-    plt.fill_between(steps, norm(sd3_m) - norm_std(sd3_std), norm(sd3_m) + norm_std(sd3_std), color=colors[2], alpha=0.2)
-    plt.plot(steps, norm(sd4_m), color=colors[3], ls='-.', lw=2.5, label=f'Drug 3 Mean', alpha=1.0)
-    plt.fill_between(steps, norm(sd4_m) - norm_std(sd4_std), norm(sd4_m) + norm_std(sd4_std), color=colors[3], alpha=0.2)
-    
-    plt.ylim(0, 1)
-    plt.grid(True, ls='--', alpha=0.4)
-    plt.title(f"Normalized Fitness Trajectories (500 episodes)\nPolicy: {sig}", fontsize=14, fontweight='bold')
-    plt.xlabel("RL Steps", fontsize=12)
-    plt.ylabel("Normalized Fitness", fontsize=12)
-    plt.legend(fontsize=10, loc='center right', bbox_to_anchor=(1.25, 0.5))
-    plt.tight_layout()
-    plt.savefig(str(project_root / 'log' / f'{sig}_dashboard_trajectories.png'), dpi=200, bbox_inches='tight')
-    plt.close()
+
+
+    def plot_fitness_trajectories(max_steps=None, suffix=""):
+        if max_steps is None:
+            max_steps = EVAL_STEPS
+            
+        plt.figure(figsize=(12, 8))
+        steps = np.arange(max_steps)
+        def norm(arr): return (arr[:max_steps] - g_min) / (g_max - g_min)
+        def norm_std(arr): return arr[:max_steps] / (g_max - g_min)
+        
+        
+        # Random
+        plt.plot(steps, norm(rn_m), color='gray', ls=':', lw=2, label='Random Mean')
+        plt.fill_between(steps, norm(rn_m) - norm_std(rn_std), norm(rn_m) + norm_std(rn_std), color='gray', alpha=0.1)
+        
+        # Greedy
+        plt.plot(steps, norm(gr_m), color='#ff7f0e', ls='--', lw=2.5, label='Greedy Mean')
+        plt.fill_between(steps, norm(gr_m) - norm_std(gr_std), norm(gr_m) + norm_std(gr_std), color='#ff7f0e', alpha=0.2)
+        
+        # SHEPHERD
+        plt.plot(steps, norm(sh_m), color='black', ls='-.', lw=2.5, label='SHEPHERD Mean')
+        plt.fill_between(steps, norm(sh_m) - norm_std(sh_std), norm(sh_m) + norm_std(sh_std), color='black', alpha=0.2)
+        
+        # Learned
+        plt.plot(steps, norm(rl_m), color='#1f77b4', lw=3, label='Learned Mean')
+        plt.fill_between(steps, norm(rl_m) - norm_std(rl_std), norm(rl_m) + norm_std(rl_std), color='#1f77b4', alpha=0.2)
+        
+        # Single Drugs
+        colors = ['#FF0000', '#32CD32', '#8A2BE2', '#FF1493']
+        
+        for d in range(num_drugs):
+            if d == 0: m, std = sd1_m, sd1_std
+            elif d == 1: m, std = sd2_m, sd2_std
+            elif d == 2: m, std = sd3_m, sd3_std
+            else: m, std = sd4_m, sd4_std
+            plt.plot(steps, norm(m), color=colors[d], ls='-.', lw=2.5, label=f'Drug {d} Mean', alpha=1.0)
+            plt.fill_between(steps, norm(m) - norm_std(std), norm(m) + norm_std(std), color=colors[d], alpha=0.2)
+        
+        plt.ylim(0, 1)
+        plt.grid(True, ls='--', alpha=0.4)
+        title_str = f"Normalized Fitness Trajectories ({max_steps} steps)\nPolicy: {sig}"
+        if max_steps < EVAL_STEPS:
+            title_str = "ZOOMED: " + title_str
+        plt.title(title_str, fontsize=14, fontweight='bold')
+        plt.xlabel("RL Steps", fontsize=12)
+        plt.ylabel("Normalized Fitness", fontsize=12)
+        plt.legend(fontsize=10, loc='center right', bbox_to_anchor=(1.25, 0.5))
+        plt.tight_layout()
+        plt.savefig(str(project_root / 'log' / f'{sig}_dashboard_trajectories{suffix}.png'), dpi=200, bbox_inches='tight')
+        plt.close()
+
+    plot_fitness_trajectories(max_steps=EVAL_STEPS, suffix="")
+    plot_fitness_trajectories(max_steps=min(100, EVAL_STEPS), suffix="_zoomed")
 
     # Define policy functions for plotting
     def rl_policy_fn(state):
@@ -229,9 +272,14 @@ def main():
         return res.act[0]
         
     def gr_policy_fn(state):
-        return greedy_policy(state, four_state_data)
+        return greedy_policy(state, landscape_data)
         
-    genotype_labels = ["00", "01", "10", "11"]
+    if DATASET == "three_state":
+        genotype_labels = ["0", "1", "2"]
+        is_three_state = True
+    else:
+        genotype_labels = ["00", "01", "10", "11"]
+        is_three_state = False
     
     # 2. Population distribution simplexes
     print("Plotting Population Distribution Simplexes...")
@@ -239,7 +287,8 @@ def main():
         state_trajectories=rl_states,
         policy_fn=rl_policy_fn,
         greedy_policy_fn=gr_policy_fn,
-        num_drugs=num_drugs
+        num_drugs=num_drugs,
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_pop_density.png'), dpi=200, bbox_inches='tight')
@@ -251,7 +300,8 @@ def main():
         policy_fn=rl_policy_fn,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title=f"Learned Policy: {sig}"
+        title=f"Learned Policy: {sig}",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_policy.png'), dpi=200, bbox_inches='tight')
@@ -261,7 +311,8 @@ def main():
         policy_fn=gr_policy_fn,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="Greedy Policy"
+        title="Greedy Policy",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_greedy_policy.png'), dpi=200, bbox_inches='tight')
@@ -271,7 +322,8 @@ def main():
         policy_fn=shepherd_fn,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="SHEPHERD Policy (L=20)"
+        title="SHEPHERD Policy (L=20)",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_policy.png'), dpi=200, bbox_inches='tight')
@@ -281,10 +333,11 @@ def main():
     print("Plotting Policy Fitness Landscape Slices...")
     fig = plot_policy_fitness_landscape_slices(
         policy_fn=rl_policy_fn,
-        landscapes=four_state_data,
+        landscapes=landscape_data,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="Normalized Fitness Landscape (Learned Policy)"
+        title="Normalized Fitness Landscape (Learned Policy)",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_fitness_landscape.png'), dpi=200, bbox_inches='tight')
@@ -297,7 +350,8 @@ def main():
         policy_fn_2=gr_policy_fn,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="Policy Disagreement (Learned vs Greedy)"
+        title="Policy Disagreement (Learned vs Greedy)",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_disagreement.png'), dpi=200, bbox_inches='tight')
@@ -308,10 +362,11 @@ def main():
     fig = plot_policy_magnitude_difference_slices(
         policy_fn_1=rl_policy_fn,
         policy_fn_2=gr_policy_fn,
-        landscapes=four_state_data,
+        landscapes=landscape_data,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="Absolute Policy Fitness Difference (Learned vs Greedy)"
+        title="Absolute Policy Fitness Difference (Learned vs Greedy)",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
@@ -324,7 +379,8 @@ def main():
         policy_fn_2=shepherd_fn,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="Policy Disagreement (Learned vs SHEPHERD)"
+        title="Policy Disagreement (Learned vs SHEPHERD)",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_disagreement.png'), dpi=200, bbox_inches='tight')
@@ -335,17 +391,88 @@ def main():
     fig = plot_policy_magnitude_difference_slices(
         policy_fn_1=rl_policy_fn,
         policy_fn_2=shepherd_fn,
-        landscapes=four_state_data,
+        landscapes=landscape_data,
         num_drugs=num_drugs,
         genotype_labels=genotype_labels,
-        title="Absolute Policy Fitness Difference (Learned vs SHEPHERD)"
+        title="Absolute Policy Fitness Difference (Learned vs SHEPHERD)",
+        is_three_state=is_three_state
     )
     if fig is not None:
         fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
         plt.close(fig)
 
 
-    #Print out final steady-state fitnesses for Greedy, SHEPHERD, and REMARC and each of the drugs.
+    # 9. Steady state frequencies on decision boundaries
+    print("Plotting Steady State Frequencies over Decision Boundary...")
+    rl_final = np.array([run[-1] for run in rl_states])
+    sh_final = np.array([run[-1] for run in sh_states])
+    gr_final = np.array([run[-1] for run in gr_states])
+    
+    fig = plot_simplex_policy_slices(
+        policy_fn=rl_policy_fn,
+        num_drugs=num_drugs,
+        genotype_labels=genotype_labels,
+        title=f"Steady State (Learned Policy)",
+        is_three_state=is_three_state,
+        scatter_states=rl_final
+    )
+    if fig is not None:
+        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_RL.png'), dpi=200, bbox_inches='tight')
+        plt.close(fig)
+
+    fig = plot_simplex_policy_slices(
+        policy_fn=shepherd_fn,
+        num_drugs=num_drugs,
+        genotype_labels=genotype_labels,
+        title=f"Steady State (SHEPHERD Policy)",
+        is_three_state=is_three_state,
+        scatter_states=sh_final
+    )
+    if fig is not None:
+        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_SHEPHERD.png'), dpi=200, bbox_inches='tight')
+        plt.close(fig)
+
+    fig = plot_simplex_policy_slices(
+        policy_fn=gr_policy_fn,
+        num_drugs=num_drugs,
+        genotype_labels=genotype_labels,
+        title=f"Steady State (Greedy Policy)",
+        is_three_state=is_three_state,
+        scatter_states=gr_final
+    )
+    if fig is not None:
+        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_Greedy.png'), dpi=200, bbox_inches='tight')
+        plt.close(fig)
+
+    # 10. Frequency trajectories
+    print("Plotting Frequency Trajectories...")
+    def plot_freq_traj(states_list, title_prefix, filename_suffix):
+        states_arr = np.array(states_list)  # (runs, steps, genotypes)
+        mean_freqs = np.mean(states_arr, axis=0) # (steps, genotypes)
+        steps = np.arange(mean_freqs.shape[0])
+        plt.figure(figsize=(12, 6))
+        for i in range(mean_freqs.shape[1]):
+            plt.plot(steps, mean_freqs[:, i], label=genotype_labels[i], lw=2)
+            
+        plt.ylim(0, 1)
+        plt.grid(True, ls='--', alpha=0.4)
+        plt.title(f"{title_prefix} Genotype Frequencies over Time (Averaged over runs)", fontsize=14, fontweight='bold')
+        plt.xlabel("RL Steps", fontsize=12)
+        plt.ylabel("Average Frequency", fontsize=12)
+        plt.legend(fontsize=10, loc='center right', bbox_to_anchor=(1.15, 0.5))
+        plt.tight_layout()
+        plt.savefig(str(project_root / 'log' / f'{sig}_dashboard_freqs_{filename_suffix}.png'), dpi=200, bbox_inches='tight')
+        plt.close()
+        
+    plot_freq_traj(rl_states, "Learned Policy", "RL")
+    plot_freq_traj(sh_states, "SHEPHERD Policy", "SHEPHERD")
+    plot_freq_traj(gr_states, "Greedy Policy", "Greedy")
+
+    # Print out final steady-state fitnesses for Greedy, SHEPHERD, and REMARC and each of the drugs.
+
+    def norm(arr): return (arr - g_min) / (g_max - g_min)
+    def norm_std(arr): return arr / (g_max - g_min)
+
     print("Final Steady State Fitnesses:")
     print("Greedy:", norm(gr_m[-1]))
     print("SHEPHERD:", norm(sh_m[-1]))

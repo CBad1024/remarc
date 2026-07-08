@@ -25,6 +25,7 @@ class Presets:
     landscape_amplification: float = 1.0
     stochastic: bool = True
     n_frames: int = 1
+    delta_horizon: int = 1
 
     @staticmethod
     def p1_ss():
@@ -158,6 +159,47 @@ class Presets:
             batch_size=128,
             buffer_size=20000,
             dataset="four_state",
+            activation="relu",
+            reward_clip=False,
+            ent_coef=0.05,
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True,
+            n_frames=3
+        )
+
+    @staticmethod
+    def p_three_state_ls():
+        return Presets(
+            state_shape=(3,),
+            num_actions=4,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=4000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="three_state",
+            activation="relu",
+            reward_clip=False,
+            ent_coef=0.05,
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True
+        )
+
+    @staticmethod
+    def p_three_state_stacked():
+        return Presets(
+            state_shape=(9,),
+            num_actions=4,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=4000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="three_state",
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
