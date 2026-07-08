@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import json
-from remarc.envs import define_chen_landscapes, define_chen_landscapes, define_four_state_landscapes
-
+from remarc.envs import define_chen_landscapes, define_four_state_landscapes, define_three_state_landscapes
+from remarc.envs.wright_fisher_env import WrightFisherEnv, ThreeGenotypeEnv
 # Add project root to sys.path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -46,8 +46,9 @@ MODES = {"Wright-Fisher Landscapes": "wf_ls"}
 
 
 DATASET_OPTIONS = {
-        "Chen et al.": {"N": 3, "description": "Empirical fitness landscapes from Chen et al.", "cli": "chen"},
+    "Chen et al.": {"N": 3, "description": "Empirical fitness landscapes from Chen et al.", "cli": "chen"},
     "Four-State": {"N": 2, "description": "Empirical four-state fitness landscapes (4 drugs, N=2).", "cli": "four_state"},
+    "Three-State": {"N": 2, "description": "Empirical three-state fitness landscapes (3 genotypes).", "cli": "three_state"},
     "Synthetic": {"N": "any", "description": "Randomly generated landscapes with configurable N.", "cli": "synthetic"}
 }
 
@@ -176,6 +177,9 @@ def start_simulation(tab_id):
         sig_lower = sim["signature"].lower()
         if "fourstate" in sig_lower:
             sim["hp"]["dataset"] = "Four-State"
+            sim["hp"]["n_mut"] = 2
+        elif "threestate" in sig_lower:
+            sim["hp"]["dataset"] = "Three-State"
             sim["hp"]["n_mut"] = 2
         elif "jun9" in sig_lower or "chen" in sig_lower:
             sim["hp"]["dataset"] = "Chen et al."
@@ -357,6 +361,23 @@ def plot_landscape_heatmap(tab_id):
         ax.set_xlabel("Genotypes")
         ax.set_ylabel("Drugs")
         st.pyplot(fig)
+    elif sim["hp"]["dataset"] == "Three-State":
+        amp = sim["hp"].get("landscape_amplification", 1.0)
+        data = define_three_state_landscapes(amplification=amp)
+        drug_names = ['A', 'B', 'C'] if len(data) == 3 else ['A', 'B', 'C', 'D']
+        amp_label = f" (Amplification={amp:.0f}x)" if amp != 1.0 else ""
+        
+        fig, ax = plt.subplots(figsize=(8, 4))
+        im = ax.imshow(data, aspect='auto', cmap="viridis")
+        fig.colorbar(im, ax=ax, label="Fitness")
+        ax.set_xticks(range(3))
+        ax.set_xticklabels(['0', '1', '2'])
+        ax.set_yticks(range(len(data)))
+        ax.set_yticklabels(drug_names[:len(data)])
+        ax.set_title(f"Three-State Fitness Landscape{amp_label}")
+        ax.set_xlabel("Genotypes")
+        ax.set_ylabel("Drugs")
+        st.pyplot(fig)
     elif sim["hp"]["dataset"] == "Synthetic":
         st.info("Synthetic landscape visualization coming soon (requires generating a sample for N={}).".format(sim["hp"]["n_mut"]))
 
@@ -410,15 +431,19 @@ def plot_live_policy(tab_id):
         q_values = np.array(data["q_values"]) # Shape (n_states, n_actions)
         
         # Get the landscape for comparison
-        is_empirical = sim["hp"]["dataset"] in ["Chen et al.", "Four-State"]
+        is_empirical = sim["hp"]["dataset"] in ["Chen et al.", "Four-State", "Three-State"]
         if is_empirical:
             if sim["hp"]["dataset"] == "Chen et al.":
                 true_data = define_chen_landscapes()  # Shape (4 drugs, 8 genotypes)
                 dataset_name = "Chen et al."
-            else:
+            elif sim["hp"]["dataset"] == "Four-State":
                 amp = sim["hp"].get("landscape_amplification", 1.0)
                 true_data = define_four_state_landscapes(amplification=amp)  # Shape (4 drugs, 4 genotypes)
                 dataset_name = "Four-State"
+            elif sim["hp"]["dataset"] == "Three-State":
+                amp = sim["hp"].get("landscape_amplification", 1.0)
+                true_data = define_three_state_landscapes(amplification=amp)
+                dataset_name = "Three-State"
                 
             # Transpose to match Q-values orientation (genotypes x drugs)
             true_landscape = true_data.T  # Now (genotypes, drugs)
@@ -512,18 +537,29 @@ def plot_simplex_section(tab_id):
     sim = st.session_state.sims[tab_id]
     dataset = sim["hp"].get("dataset", "")
 
-    # Only show for four-state datasets
-    if DATASET_OPTIONS.get(dataset, {}).get("cli") != "four_state":
+    # Only show for three/four-state datasets
+    if DATASET_OPTIONS.get(dataset, {}).get("cli") not in ["four_state", "three_state"]:
         return
 
     from examples.plotting import plot_simplex_policy_slices, greedy_policy
-    from remarc.envs.utils import define_four_state_landscapes
+    
+    is_three_state = DATASET_OPTIONS.get(dataset, {}).get("cli") == "three_state"
 
     st.subheader("Simplex Visualization: Greedy Policy")
-    st.caption("3D simplex (x₀+x₁+x₂+x₃=1) sliced along x₃. Color shows which drug the policy selects at each population composition.")
+    if is_three_state:
+        st.caption("2D simplex (x₀+x₁+x₂=1). Color shows which drug the policy selects at each population composition.")
+    else:
+        st.caption("3D simplex (x₀+x₁+x₂+x₃=1) sliced along x₃. Color shows which drug the policy selects at each population composition.")
 
     amp = sim["hp"].get("landscape_amplification", 1.0)
-    landscapes = define_four_state_landscapes(amplification=amp)
+    if is_three_state:
+        landscapes = define_three_state_landscapes(amplification=amp)
+        g_labels = ["genotype 0", "genotype 1", "genotype 2"]
+        drug_labels = ["Drug A", "Drug B", "Drug C", "Drug D"][:len(landscapes)]
+    else:
+        landscapes = define_four_state_landscapes(amplification=amp)
+        g_labels = ["genotype 0", "genotype 1", "genotype 2", "genotype 3"]
+        drug_labels = ["Drug A", "Drug B", "Drug C", "Drug D"]
 
     # --- Greedy baseline ---
     def greedy_fn(state):
@@ -532,10 +568,11 @@ def plot_simplex_section(tab_id):
     fig_greedy = plot_simplex_policy_slices(
         policy_fn=greedy_fn,
         num_drugs=len(landscapes),
-        drug_labels=["Drug A", "Drug B", "Drug C", "Drug D"],
-        genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+        drug_labels=drug_labels,
+        genotype_labels=g_labels,
         resolution=50,
         title="Greedy Policy (minimize immediate fitness)",
+        is_three_state=is_three_state
     )
     st.pyplot(fig_greedy)
     plt.close(fig_greedy)
@@ -555,14 +592,16 @@ def plot_simplex_section(tab_id):
             st.subheader("Simplex Visualization: Trained RL Policy")
             try:
                 from examples.plotting import _load_ppo_policy_fn
-                trained_fn = _load_ppo_policy_fn(str(policy_path), state_dim=4, n_actions=len(landscapes))
+                state_dim = 3 if is_three_state else 4
+                trained_fn = _load_ppo_policy_fn(str(policy_path), state_dim=state_dim, n_actions=len(landscapes))
                 fig_trained = plot_simplex_policy_slices(
                     policy_fn=trained_fn,
                     num_drugs=len(landscapes),
-                    drug_labels=["Drug A", "Drug B", "Drug C", "Drug D"],
-                    genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+                    drug_labels=drug_labels,
+                    genotype_labels=g_labels,
                     resolution=50,
                     title="Trained RL Policy",
+                    is_three_state=is_three_state
                 )
                 st.pyplot(fig_trained)
                 plt.close(fig_trained)
@@ -591,7 +630,7 @@ def plot_simplex_section(tab_id):
                             g_min, g_max = np.min(landscapes), np.max(landscapes)
                             landscape_objs = [Landscape(2, sigma=0.0, ls=ls, g_min=g_min, g_max=g_max) for ls in landscapes]
                             
-                            dummy_env = WrightFisherEnv(
+                            env_kwargs = dict(
                                 pop_size=sim["hp"].get("pop_size", 10000),
                                 seq_length=2,
                                 mutation_rate=sim["hp"].get("mutation_rate", 1e-4),
@@ -599,6 +638,10 @@ def plot_simplex_section(tab_id):
                                 num_drugs=len(landscapes),
                                 landscape_list=landscape_objs
                             )
+                            if is_three_state:
+                                dummy_env = ThreeGenotypeEnv(**env_kwargs)
+                            else:
+                                dummy_env = WrightFisherEnv(**env_kwargs)
                             
                             cache_path = project_root / 'log' / f'shepherd_L{current_L}.npz'
                             shepherd_mdp = ShepherdMDP.from_env(dummy_env, L=current_L, discount=0.99)
@@ -619,10 +662,11 @@ def plot_simplex_section(tab_id):
                     fig_shepherd = plot_simplex_policy_slices(
                         policy_fn=sim["shepherd_fn"],
                         num_drugs=len(landscapes),
-                        drug_labels=["Drug A", "Drug B", "Drug C", "Drug D"],
-                        genotype_labels=["genotype 0", "genotype 1", "genotype 2", "genotype 3"],
+                        drug_labels=drug_labels,
+                        genotype_labels=g_labels,
                         resolution=50,
                         title="SHEPHERD Policy (Exact MDP)",
+                        is_three_state=is_three_state
                     )
                     st.pyplot(fig_shepherd)
                     plt.close(fig_shepherd)

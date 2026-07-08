@@ -21,7 +21,7 @@ from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 
 from ..core.hyperparameters import Presets as P
-from ..envs import WrightFisherEnv
+from ..envs import WrightFisherEnv, ThreeGenotypeEnv
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +307,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
     from ..core.landscapes import Landscape
 
     landscape_list = []
+    is_three_state = False
 
     if hasattr(p, "dataset") and p.dataset == "chen":
         from remarc.envs import define_chen_landscapes
@@ -349,10 +350,27 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         for i in range(num_drugs):
             landscape_list.append(Landscape(v_N, sigma=0.0, ls=trap_data[i], g_min=g_min, g_max=g_max))
 
+    elif hasattr(p, "dataset") and (p.dataset == "three_state" or p.dataset == "Three State"):
+        from remarc.envs import define_three_state_landscapes
+        amp = getattr(p, "landscape_amplification", 1.0)
+        print(f"Using Three-State landscapes for training (amplification={amp:.1f}).")
+        v_N = 2
+        three_state_data = define_three_state_landscapes(amplification=amp)
+        num_drugs = len(three_state_data)
+
+        g_min, g_max = np.min(three_state_data), np.max(three_state_data)
+        print(f"Three-State Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
+
+        for i in range(num_drugs):
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=three_state_data[i], g_min=g_min, g_max=g_max))
+        
+        is_three_state = True
+
     else:
         print("Using synthetic random landscapes for Wright-Fisher training.")
         num_drugs = 10
         landscape_list = [Landscape(v_N, sigma=0.5) for _ in range(num_drugs)]
+        is_three_state = False
 
     # Save shared landscapes so train.py evaluation uses the same data
     ls_filename = f"active_landscapes_{signature}.pkl" if signature else "active_landscapes.pkl"
@@ -361,7 +379,10 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         pickle.dump(landscape_list, f)
 
     print(f"Number of drugs: {len(landscape_list)}")
-    train_envs, test_envs = WrightFisherEnv.getEnv(
+    
+    EnvClass = ThreeGenotypeEnv if is_three_state else WrightFisherEnv
+    
+    train_envs, test_envs = EnvClass.getEnv(
         getattr(p, "n_train_envs", 4), getattr(p, "n_test_envs", 2),
         landscape_list=landscape_list,
         gen_per_step=getattr(p, "gen_per_step", 500),
@@ -373,24 +394,29 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         delta_multiplier=getattr(p, "delta_multiplier", 0.0),
         mutation_rate=getattr(p, "mutation_rate", 1e-4),
         n_frames=n_frames,
+        delta_horizon=getattr(p, "delta_horizon", 1),
     )
 
     print("Saving testing environments to testing_envs.pkl")
     total_gens = getattr(p, "gen_per_step", 500) * getattr(p, "episode_steps", 20)
-    test_env_instances = [
-        WrightFisherEnv(
-            landscape_list=landscape_list, 
-            num_drugs=len(landscape_list),
-            gen_per_step=getattr(p, "gen_per_step", 500),
-            seq_length=v_N,
-            random_start=False, 
-            total_generations=total_gens,
-            reward_scale=getattr(p, "reward_scale", 100.0), 
-            stochastic=getattr(p, "stochastic", True),
-            delta_multiplier=getattr(p, "delta_multiplier", 0.0),
-            n_frames=n_frames
-        ) for _ in range(2)
-    ]
+    
+    env_kwargs = dict(
+        landscape_list=landscape_list, 
+        num_drugs=len(landscape_list),
+        gen_per_step=getattr(p, "gen_per_step", 500),
+        seq_length=v_N,
+        random_start=False, 
+        total_generations=total_gens,
+        reward_scale=getattr(p, "reward_scale", 100.0), 
+        stochastic=getattr(p, "stochastic", True),
+        delta_multiplier=getattr(p, "delta_multiplier", 0.0),
+        mutation_rate=getattr(p, "mutation_rate", 1e-4),
+        n_frames=n_frames,
+        delta_horizon=getattr(p, "delta_horizon", 1),
+    )
+    
+    test_env_instances = [EnvClass(**env_kwargs) for _ in range(2)]
+    
     with open(os.path.join(log_path, "testing_envs.pkl"), "wb") as f:
         pickle.dump(test_env_instances, f)
 
@@ -428,7 +454,8 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
             stats = test_collector.collect(n_episode=eval_eps)
             if stats.returns_stat:
                 metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
-            log_policy_snapshot(sig, policy, 2**v_N, n_frames)
+            state_dim = 3 if is_three_state else (2**v_N)
+            log_policy_snapshot(sig, policy, state_dim, n_frames)
             
             if trial is not None:
                 norm_reward = stats.returns_stat.mean / getattr(p, "reward_scale", 1.0)
@@ -441,9 +468,9 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
         if epoch < p.epochs * 0.4:
             current_ent_coef = getattr(p, "ent_coef", 0.05)
         else:
-            # Drop to 0.02 instead of 0.01 so it never completely stops exploring
+            # Drop to 0.0 so the network becomes fully deterministic in final epochs
             decay_steps = p.epochs * 0.5
-            current_ent_coef = max(policy.ent_coef - (getattr(p, "ent_coef", 0.05) - 0.02) / decay_steps, 0.02)
+            current_ent_coef = max(policy.ent_coef - getattr(p, "ent_coef", 0.05) / decay_steps, 0.0)
         policy.ent_coef = current_ent_coef
 
     tb_log_path = os.path.join(PROJECT_ROOT, "log", "tensorboard", sig)
@@ -507,21 +534,24 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPo
     obs_shape = train_envs.get_env_attr("observation_space")[0].shape
     action_shape = train_envs.get_env_attr("action_space")[0].n
 
+    hidden_sizes = getattr(p, "hidden_sizes", [256, 256, 256])
+    head_sizes = getattr(p, "head_sizes", [128])
+
     net = Net(
         state_shape=obs_shape,
-        hidden_sizes=[256, 256, 256],
+        hidden_sizes=hidden_sizes,
         activation=activation,
         device=device,
     )
     actor = Actor(
         preprocess_net=net,
         action_shape=action_shape,
-        hidden_sizes=[128],
+        hidden_sizes=head_sizes,
         device=device,
     ).to(device)
     critic = Critic(
         preprocess_net=net,
-        hidden_sizes=[128],
+        hidden_sizes=head_sizes,
         device=device,
     ).to(device)
 

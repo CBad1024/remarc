@@ -3,6 +3,7 @@ RL Battery Test: Sweep over Delta Multipliers on the Four-State dataset.
 Grid: MR(1e-5, 1e-4) x Delta(0.2, 0.5, 1.0, 2.0)
 Fixed: GPS=10, LR=3e-4, Ent=0.1
 """
+from remarc.envs import ThreeGenotypeEnv
 import sys
 import os
 import itertools
@@ -19,7 +20,7 @@ from remarc.core.hyperparameters import Presets as P
 from remarc.agents.tianshou_agent import train_wf_landscapes, get_ppo_policy, load_best_fn, RandomPolicy
 from remarc.envs.wright_fisher_env import WrightFisherEnv
 from remarc.agents.greedy_agent import GreedyAgent
-from remarc.envs.utils import define_four_state_landscapes
+from remarc.envs.utils import define_three_state_landscapes
 from remarc.core.landscapes import Landscape
 from tianshou.env import DummyVectorEnv
 from tianshou.data import Batch
@@ -70,26 +71,37 @@ def smooth(arr, window=20):
 # ── Main ────────────────────────────────────────────────────────────────────
 def main():
     # Grid
-    mr_vals    = [1e-5, 1e-4]
-    delta_vals = [0.2, 0.5, 1.0, 2.0]
+    mr_vals    = [1e-5]
+    delta_vals = [1.5, 2.0, 5.0]
 
     # Fixed
     GPS           = 10
-    LR            = 3e-4
+    LR            = 1e-4
     ENT           = 0.1
-    EPOCHS        = 100
-    EPISODE_STEPS = 200
+    EPOCHS        = 200
+    EPISODE_STEPS = 1000
     REWARD_SCALE  = 100.0
-    AMP           = 5.0
+    AMP           = 1.0
     EVAL_STEPS    = 1000
-    EVAL_RUNS     = 10
+    EVAL_RUNS     = 100
+    BATCH_SIZE    = 64
+    GAMMA         = 0.99
+    DATASET       = "Three State"
 
     # Build landscape once
-    four_state_data = define_four_state_landscapes(amplification=AMP)
-    num_drugs = len(four_state_data)
-    v_N = 2
-    g_min, g_max = np.min(four_state_data), np.max(four_state_data)
-    landscape_list = [Landscape(v_N, sigma=0.0, ls=four_state_data[i], g_min=g_min, g_max=g_max)
+    if DATASET == "Three State":
+        data = define_three_state_landscapes(amplification=AMP)
+        num_drugs = len(data)
+        v_N = 2
+        g_min, g_max = np.min(data), np.max(data)
+        landscape_list = [Landscape(v_N, sigma=0.0, ls=data[i], g_min=g_min, g_max=g_max)
+                      for i in range(num_drugs)]
+    elif DATASET == "Four State":
+        data = define_four_state_landscapes(amplification=AMP)
+        num_drugs = len(data)
+        v_N = 2
+        g_min, g_max = np.min(data), np.max(data)
+        landscape_list = [Landscape(v_N, sigma=0.0, ls=data[i], g_min=g_min, g_max=g_max)
                       for i in range(num_drugs)]
 
     combos = list(itertools.product(mr_vals, delta_vals))
@@ -98,26 +110,29 @@ def main():
     results = {}
 
     for idx, (mr, delta) in enumerate(combos):
-        sig = f"bat2_mr{mr}_delta{delta}"
+        sig = f"{DATASET}_d{delta}_g{GPS}_gam{GAMMA}_e{ENT}_b{BATCH_SIZE}"
         print(f"\n{'='*60}")
         print(f"[{idx+1}/{len(combos)}] MR={mr} Delta={delta}")
         print(f"{'='*60}")
 
         # ── Train ───────────────────────────────────────────────────
+        state_shape_val = 3 if DATASET == "Three State" else (2**v_N)
+        dataset_val = "three_state" if DATASET == "Three State" else "four_state"
+
         p = P(
-            state_shape=(2**v_N,),
+            state_shape=(state_shape_val,),
             num_actions=num_drugs,
             buffer_size=20000,
             lr=LR,
-            gamma=0.99,
+            gamma=GAMMA,
             gae_lambda=0.95,
             ent_coef=ENT,
-            batch_size=32,
+            batch_size=BATCH_SIZE,
             epochs=EPOCHS,
             train_steps_per_epoch=2000,
             reward_scale=REWARD_SCALE,
             gen_per_step=GPS,
-            dataset="four_state",
+            dataset=dataset_val,
             landscape_amplification=AMP,
             test_episodes=10,
             episode_steps=EPISODE_STEPS,
@@ -130,18 +145,32 @@ def main():
         train_wf_landscapes(p, signature=sig)
 
         # ── Evaluate ────────────────────────────────────────────────
-        eval_env = WrightFisherEnv(
-            landscape_list=landscape_list,
-            num_drugs=num_drugs,
-            gen_per_step=GPS,
-            seq_length=v_N,
-            random_start=False,
-            total_generations=GPS * EVAL_STEPS + 100,
-            reward_scale=REWARD_SCALE,
-            stochastic=False,
-            delta_multiplier=delta,
-            mutation_rate=mr,
-        )
+        if DATASET == "Three State":
+            eval_env = ThreeGenotypeEnv(
+                landscape_list=landscape_list,
+                num_drugs=num_drugs,
+                gen_per_step=GPS,
+                seq_length=v_N,
+                random_start=False,
+                total_generations=GPS * EVAL_STEPS + 100,
+                reward_scale=REWARD_SCALE,
+                stochastic=False,
+                delta_multiplier=delta,
+                mutation_rate=mr,
+            )
+        else:
+            eval_env = WrightFisherEnv(
+                landscape_list=landscape_list,
+                num_drugs=num_drugs,
+                gen_per_step=GPS,
+                seq_length=v_N,
+                random_start=False,
+                total_generations=GPS * EVAL_STEPS + 100,
+                reward_scale=REWARD_SCALE,
+                stochastic=False,
+                delta_multiplier=delta,
+                mutation_rate=mr,
+            )
 
         test_envs = DummyVectorEnv([lambda: eval_env])
         policy = get_ppo_policy(p, test_envs).eval()

@@ -97,13 +97,17 @@ def plot_simplex_policy_slices(
     figsize=None,
     ax_array=None,
     show_legend=True,
+    is_three_state=False,
+    scatter_states=None,
 ):
     """
-    Visualize a drug-switching policy on the 4-genotype simplex.
+    Visualize a drug-switching policy on the simplex.
 
     For a system with 4 genotypes, the population state lives on the
     3-simplex (x₀ + x₁ + x₂ + x₃ = 1). We slice along x₃ and show
-    each cross-section as a colored triangle, where the color at each
+    each cross-section as a colored triangle.
+    For a system with 3 genotypes, the population state lives exactly on the
+    2-simplex (x₀ + x₁ + x₂ = 1), so no slices are needed.
     point indicates which drug the policy selects for that population
     composition.
 
@@ -121,6 +125,7 @@ def plot_simplex_policy_slices(
         figsize: (width, height) tuple
         ax_array: optional pre-created axes array (length == len(x3_slices))
         show_legend: whether to draw the drug color legend
+        scatter_states: optional ndarray of states to scatter plot on the simplex
 
     Returns:
         fig: matplotlib Figure (None if ax_array was supplied)
@@ -133,11 +138,13 @@ def plot_simplex_policy_slices(
                        "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c"][:num_drugs]
     if genotype_labels is None:
         genotype_labels = [f"genotype {i}" for i in range(4)]
-    if x3_slices is None:
+    if x3_slices is None and not is_three_state:
         x3_slices = [
             (0.5, 1.0), (0.4, 0.5), (0.3, 0.4),
             (0.2, 0.3), (0.1, 0.2), (0.0, 0.1),
         ]
+    elif is_three_state:
+        x3_slices = [(0.0, 1.0)] # dummy slice
 
     n_slices = len(x3_slices)
     if figsize is None:
@@ -165,7 +172,10 @@ def plot_simplex_policy_slices(
         actions = np.zeros(len(bary), dtype=int)
         for p_idx in range(len(bary)):
             l0, l1, l2 = bary[p_idx]
-            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            if is_three_state:
+                state = np.array([l0, l1, l2], dtype=np.float32)
+            else:
+                state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
             actions[p_idx] = policy_fn(state)
 
         # ── color each triangle by its centroid action ──
@@ -184,26 +194,50 @@ def plot_simplex_policy_slices(
                             edgecolors="none", linewidths=0)
         ax.add_collection(pc)
 
+        if scatter_states is not None:
+            if is_three_state:
+                sub = np.array(scatter_states)
+                l0, l1, l2 = sub[:, 0], sub[:, 1], sub[:, 2]
+                S = l0 + l1 + l2
+                S[S < 1e-9] = 1.0
+                x = 0.5 * (2 * l1 + l2) / S
+                y = (_SQRT3_2 * l2) / S
+                ax.scatter(x, y, color='white', alpha=0.8, s=15, edgecolors='black', linewidth=0.5, zorder=6)
+            else:
+                sub = np.array(scatter_states)
+                mask = (sub[:, 3] >= x3_lo) & (sub[:, 3] <= x3_hi)
+                if np.any(mask):
+                    sub = sub[mask]
+                    l0, l1, l2 = sub[:, 0], sub[:, 1], sub[:, 2]
+                    S = l0 + l1 + l2
+                    S[S < 1e-9] = 1.0
+                    x = 0.5 * (2 * l1 + l2) / S
+                    y = (_SQRT3_2 * l2) / S
+                    ax.scatter(x, y, color='white', alpha=0.8, s=15, edgecolors='black', linewidth=0.5, zorder=6)
+
         # ── triangle outline ──
         outline_x = [0, 1, 0.5, 0]
         outline_y = [0, 0, _SQRT3_2, 0]
         ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
 
         # ── slice label ──
-        ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]",
-                ha="center", va="top", fontsize=8, transform=ax.transAxes)
+        if not is_three_state:
+            ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]",
+                    ha="center", va="top", fontsize=8, transform=ax.transAxes)
 
         # ── vertex labels on first and last slice ──
         if s_idx == 0:
             ax.text(-0.04, -0.06, genotype_labels[0],
                     ha="center", fontsize=7, style="italic")
-            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3],
+            top_label = genotype_labels[2] if is_three_state else genotype_labels[3]
+            ax.text(0.5, _SQRT3_2 + 0.06, top_label,
                     ha="center", fontsize=7, style="italic")
         if s_idx == n_slices - 1:
             ax.text(1.04, -0.06, genotype_labels[1],
                     ha="center", fontsize=7, style="italic")
-            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2],
-                    ha="center", fontsize=7, style="italic")
+            if not is_three_state:
+                ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2],
+                        ha="center", fontsize=7, style="italic")
 
         ax.set_xlim(-0.08, 1.08)
         ax.set_ylim(-0.15, _SQRT3_2 + 0.15)
@@ -211,7 +245,7 @@ def plot_simplex_policy_slices(
         ax.axis("off")
 
     # ── x₃ arrow ──
-    if fig is not None:
+    if fig is not None and not is_three_state:
         fig.text(
             0.10, 0.06,
             f"x₃ = 1",
@@ -265,6 +299,7 @@ def plot_policy_difference_slices(
     genotype_labels=None,
     title="Policy Difference",
     figsize=None,
+    is_three_state=False,
 ):
     """
     Visualize regions of agreement vs disagreement between two policies.
@@ -273,8 +308,10 @@ def plot_policy_difference_slices(
     """
     if genotype_labels is None:
         genotype_labels = [f"genotype {i}" for i in range(4)]
-    if x3_slices is None:
+    if x3_slices is None and not is_three_state:
         x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+    elif is_three_state:
+        x3_slices = [(0.0, 1.0)]
 
     n_slices = len(x3_slices)
     if figsize is None:
@@ -301,7 +338,10 @@ def plot_policy_difference_slices(
         actions_2 = np.zeros(len(bary), dtype=int)
         for p_idx in range(len(bary)):
             l0, l1, l2 = bary[p_idx]
-            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            if is_three_state:
+                state = np.array([l0, l1, l2], dtype=np.float32)
+            else:
+                state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
             actions_1[p_idx] = policy_fn_1(state)
             actions_2[p_idx] = policy_fn_2(state)
 
@@ -330,7 +370,8 @@ def plot_policy_difference_slices(
 
         if s_idx == 0:
             ax.text(-0.04, -0.06, genotype_labels[0], ha="center", fontsize=7, style="italic")
-            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3], ha="center", fontsize=7, style="italic")
+            top_label = genotype_labels[2] if is_three_state else genotype_labels[3]
+            ax.text(0.5, _SQRT3_2 + 0.06, top_label, ha="center", fontsize=7, style="italic")
         if s_idx == n_slices - 1:
             ax.text(1.04, -0.06, genotype_labels[1], ha="center", fontsize=7, style="italic")
             ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
@@ -340,9 +381,10 @@ def plot_policy_difference_slices(
         ax.set_aspect("equal")
         ax.axis("off")
 
-    fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
-    fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
-    fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
+    if not is_three_state:
+        fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
+        fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
+        fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
 
     legend_elements = [
         Patch(facecolor="#2ecc71", edgecolor="gray", linewidth=0.5, label="Agreement"),
@@ -366,6 +408,7 @@ def plot_policy_magnitude_difference_slices(
     genotype_labels=None,
     title="Policy Magnitude Difference",
     figsize=None,
+    is_three_state=False,
 ):
     """
     Visualize magnitude of disagreement between two policies.
@@ -373,8 +416,10 @@ def plot_policy_magnitude_difference_slices(
     """
     if genotype_labels is None:
         genotype_labels = [f"genotype {i}" for i in range(4)]
-    if x3_slices is None:
+    if x3_slices is None and not is_three_state:
         x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+    elif is_three_state:
+        x3_slices = [(0.0, 1.0)]
 
     n_slices = len(x3_slices)
     if figsize is None:
@@ -402,7 +447,10 @@ def plot_policy_magnitude_difference_slices(
         actions_2 = np.zeros(len(bary), dtype=int)
         for p_idx in range(len(bary)):
             l0, l1, l2 = bary[p_idx]
-            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            if is_three_state:
+                state = np.array([l0, l1, l2], dtype=np.float32)
+            else:
+                state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
             actions_1[p_idx] = policy_fn_1(state)
             actions_2[p_idx] = policy_fn_2(state)
 
@@ -416,7 +464,10 @@ def plot_policy_magnitude_difference_slices(
             if tri_a1 != tri_a2:
                 # Approximate state at the triangle's centroid
                 cb = (bary[v0] + bary[v1] + bary[v2]) / 3.0
-                state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
+                if is_three_state:
+                    state = np.array([cb[0], cb[1], cb[2]])
+                else:
+                    state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
                 fitness_1 = np.dot(landscapes[tri_a1], state)
                 fitness_2 = np.dot(landscapes[tri_a2], state)
                 # Normalize difference by the landscape range
@@ -449,23 +500,27 @@ def plot_policy_magnitude_difference_slices(
         outline_y = [0, 0, _SQRT3_2, 0]
         ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
 
-        ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]", ha="center", va="top", fontsize=8, transform=ax.transAxes)
+        if not is_three_state:
+            ax.text(0.5, -0.12, f"[{x3_lo:.1f}, {x3_hi:.1f}]", ha="center", va="top", fontsize=8, transform=ax.transAxes)
 
         if s_idx == 0:
             ax.text(-0.04, -0.06, genotype_labels[0], ha="center", fontsize=7, style="italic")
-            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3], ha="center", fontsize=7, style="italic")
+            top_label = genotype_labels[2] if is_three_state else genotype_labels[3]
+            ax.text(0.5, _SQRT3_2 + 0.06, top_label, ha="center", fontsize=7, style="italic")
         if s_idx == n_slices - 1:
             ax.text(1.04, -0.06, genotype_labels[1], ha="center", fontsize=7, style="italic")
-            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
+            if not is_three_state:
+                ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
 
         ax.set_xlim(-0.08, 1.08)
         ax.set_ylim(-0.15, _SQRT3_2 + 0.15)
         ax.set_aspect("equal")
         ax.axis("off")
 
-    fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
-    fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
-    fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
+    if not is_three_state:
+        fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
+        fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
+        fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
 
     # ── colorbar instead of legend ──
     cbar_ax = fig.add_axes([0.90, 0.25, 0.015, 0.5])
@@ -487,6 +542,7 @@ def plot_policy_fitness_landscape_slices(
     genotype_labels=None,
     title="Normalized Fitness Landscape (RL Policy)",
     figsize=None,
+    is_three_state=False,
 ):
     """
     Visualize normalized fitness of the population under the drug selected by the policy.
@@ -495,8 +551,10 @@ def plot_policy_fitness_landscape_slices(
     """
     if genotype_labels is None:
         genotype_labels = [f"genotype {i}" for i in range(4)]
-    if x3_slices is None:
+    if x3_slices is None and not is_three_state:
         x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+    elif is_three_state:
+        x3_slices = [(0.0, 1.0)]
 
     n_slices = len(x3_slices)
     if figsize is None:
@@ -525,7 +583,10 @@ def plot_policy_fitness_landscape_slices(
         actions = np.zeros(len(bary), dtype=int)
         for p_idx in range(len(bary)):
             l0, l1, l2 = bary[p_idx]
-            state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+            if is_three_state:
+                state = np.array([l0, l1, l2], dtype=np.float32)
+            else:
+                state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
             actions[p_idx] = policy_fn(state)
 
         tri_fitness = np.zeros(len(tri_idx), dtype=float)
@@ -535,7 +596,10 @@ def plot_policy_fitness_landscape_slices(
             
             # Approximate state at the triangle's centroid
             cb = (bary[v0] + bary[v1] + bary[v2]) / 3.0
-            state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
+            if is_three_state:
+                state = np.array([cb[0], cb[1], cb[2]])
+            else:
+                state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
             fitness = np.dot(landscapes[tri_a], state)
             
             # Normalize fitness to [0, 1]
@@ -560,7 +624,8 @@ def plot_policy_fitness_landscape_slices(
 
         if s_idx == 0:
             ax.text(-0.04, -0.06, genotype_labels[0], ha="center", fontsize=7, style="italic")
-            ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[3], ha="center", fontsize=7, style="italic")
+            top_label = genotype_labels[2] if is_three_state else genotype_labels[3]
+            ax.text(0.5, _SQRT3_2 + 0.06, top_label, ha="center", fontsize=7, style="italic")
         if s_idx == n_slices - 1:
             ax.text(1.04, -0.06, genotype_labels[1], ha="center", fontsize=7, style="italic")
             ax.text(0.5, _SQRT3_2 + 0.06, genotype_labels[2], ha="center", fontsize=7, style="italic")
@@ -570,9 +635,10 @@ def plot_policy_fitness_landscape_slices(
         ax.set_aspect("equal")
         ax.axis("off")
 
-    fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
-    fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
-    fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
+    if not is_three_state:
+        fig.text(0.10, 0.06, f"x₃ = 1", ha="left", fontsize=9, color="gray")
+        fig.text(0.82, 0.06, f"x₃ = 0", ha="right", fontsize=9, color="gray")
+        fig.text(0.46, 0.06, f"← {genotype_labels[3]} →", ha="center", fontsize=9, color="gray")
 
     cbar_ax = fig.add_axes([0.90, 0.25, 0.015, 0.5])
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
@@ -760,12 +826,15 @@ def plot_population_density_slices(
     resolution=60,
     x3_slices=None,
     figsize=None,
+    is_three_state=False,
 ):
     """
     Plot the population density from trajectories as a heatmap on the 2-simplex slices.
     """
-    if x3_slices is None:
+    if x3_slices is None and not is_three_state:
         x3_slices = [(0.5, 1.0), (0.4, 0.5), (0.3, 0.4), (0.2, 0.3), (0.1, 0.2), (0.0, 0.1)]
+    elif is_three_state:
+        x3_slices = [(0.0, 1.0)]
 
     n_slices = len(x3_slices)
     if figsize is None:
@@ -791,22 +860,34 @@ def plot_population_density_slices(
     slice_counts = []
     for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
         # Filter states by x3 slice
-        if s_idx == 0:
-            mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] <= x3_hi)
+        if is_three_state:
+            states_in_slice = all_states
         else:
-            mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] < x3_hi)
+            if s_idx == 0:
+                mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] <= x3_hi)
+            else:
+                mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] < x3_hi)
+            states_in_slice = all_states[mask]
         
-        states_in_slice = all_states[mask]
         counts = np.zeros(len(tri_idx), dtype=float)
         
         if len(states_in_slice) > 0:
-            x3_mid = (x3_lo + x3_hi) / 2.0
-            S = 1.0 - x3_mid
-            
-            if S > 0:
-                l0 = states_in_slice[:, 0] / S
-                l1 = states_in_slice[:, 1] / S
-                l2 = states_in_slice[:, 2] / S
+            if is_three_state:
+                l0 = states_in_slice[:, 0]
+                l1 = states_in_slice[:, 1]
+                l2 = states_in_slice[:, 2]
+            else:
+                x3_mid = (x3_lo + x3_hi) / 2.0
+                S = 1.0 - x3_mid
+                
+                if S > 0:
+                    l0 = states_in_slice[:, 0] / S
+                    l1 = states_in_slice[:, 1] / S
+                    l2 = states_in_slice[:, 2] / S
+                else:
+                    l0 = np.zeros_like(states_in_slice[:, 0])
+                    l1 = np.zeros_like(states_in_slice[:, 1])
+                    l2 = np.zeros_like(states_in_slice[:, 2])
                 
                 # Normalize just in case of float precision issues
                 tot = l0 + l1 + l2
@@ -855,7 +936,10 @@ def plot_population_density_slices(
             S = 1.0 - x3_mid
             for p_idx in range(len(bary)):
                 l0, l1, l2 = bary[p_idx]
-                state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+                if is_three_state:
+                    state = np.array([l0, l1, l2], dtype=np.float32)
+                else:
+                    state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
                 if policy_fn is not None:
                     actions[p_idx] = policy_fn(state)
                 if greedy_policy_fn is not None:

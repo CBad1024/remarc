@@ -17,10 +17,10 @@ sys.path.append(str(project_root))
 
 from remarc.core.hyperparameters import Presets as P
 from remarc.agents.tianshou_agent import train_wf_landscapes, get_ppo_policy, load_best_fn, RandomPolicy
-from remarc.envs.wright_fisher_env import WrightFisherEnv
-from remarc.agents.greedy_agent import GreedyAgent
-from remarc.envs.utils import define_four_state_landscapes
+from remarc.envs.utils import define_four_state_landscapes, define_three_state_landscapes
 from remarc.core.landscapes import Landscape
+from remarc.envs.wright_fisher_env import WrightFisherEnv, ThreeGenotypeEnv
+from remarc.agents.greedy_agent import GreedyAgent
 from tianshou.env import DummyVectorEnv
 from tianshou.data import Batch
 
@@ -70,27 +70,32 @@ def smooth(arr, window=20):
 # ── Main ────────────────────────────────────────────────────────────────────
 def main():
     # Grid
-    gamma_vals = [0.99, 0.995, 0.999]
+    gamma_vals = [0.99]
+    DATASET = "three_state"  # Change to "three_state" to use 3-state system
 
     # Fixed
     GPS           = 10
-    LR            = 3e-4
+    LR            = 1e-4
     ENT           = 0.1
     MR            = 1e-5
     DELTA         = 1.0
-    EPOCHS        = 300
+    EPOCHS        = 200
     EPISODE_STEPS = 500
     REWARD_SCALE  = 100.0
-    AMP           = 5.0
+    AMP           = 1.0
     EVAL_STEPS    = 1000
     EVAL_RUNS     = 10
 
     # Build landscape once
-    four_state_data = define_four_state_landscapes(amplification=AMP)
-    num_drugs = len(four_state_data)
+    if DATASET == "three_state":
+        landscape_data = define_three_state_landscapes(amplification=AMP)
+    else:
+        landscape_data = define_four_state_landscapes(amplification=AMP)
+    
+    num_drugs = len(landscape_data)
     v_N = 2
-    g_min, g_max = np.min(four_state_data), np.max(four_state_data)
-    landscape_list = [Landscape(v_N, sigma=0.0, ls=four_state_data[i], g_min=g_min, g_max=g_max)
+    g_min, g_max = np.min(landscape_data), np.max(landscape_data)
+    landscape_list = [Landscape(v_N, sigma=0.0, ls=landscape_data[i], g_min=g_min, g_max=g_max)
                       for i in range(num_drugs)]
 
     print(f"Total configurations: {len(gamma_vals)}")
@@ -116,20 +121,21 @@ def main():
             train_steps_per_epoch=2000,
             reward_scale=REWARD_SCALE,
             gen_per_step=GPS,
-            dataset="four_state",
+            dataset=DATASET,
             landscape_amplification=AMP,
             test_episodes=10,
             episode_steps=EPISODE_STEPS,
             delta_multiplier=DELTA,
             stochastic=False,
             random_start=False,
+            delta_horizon=5,
         )
         object.__setattr__(p, 'mutation_rate', MR)
 
         train_wf_landscapes(p, signature=sig)
 
         # ── Evaluate ────────────────────────────────────────────────
-        eval_env = WrightFisherEnv(
+        env_kwargs = dict(
             landscape_list=landscape_list,
             num_drugs=num_drugs,
             gen_per_step=GPS,
@@ -140,7 +146,12 @@ def main():
             stochastic=False,
             delta_multiplier=DELTA,
             mutation_rate=MR,
+            delta_horizon=5,
         )
+        if DATASET == "three_state":
+            eval_env = ThreeGenotypeEnv(**env_kwargs)
+        else:
+            eval_env = WrightFisherEnv(**env_kwargs)
 
         test_envs = DummyVectorEnv([lambda: eval_env])
         policy = get_ppo_policy(p, test_envs).eval()

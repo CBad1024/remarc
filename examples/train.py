@@ -23,7 +23,7 @@ import json
 import pickle
 
 from remarc.envs.utils import define_chen_landscapes
-from remarc.envs import WrightFisherEnv, define_chen_landscapes, define_four_state_landscapes
+from remarc.envs import WrightFisherEnv, ThreeGenotypeEnv, define_chen_landscapes, define_four_state_landscapes, define_three_state_landscapes
 from remarc.core.hyperparameters import Presets
 from remarc.core.landscapes import Landscape
 from remarc.agents.tianshou_agent import load_best_policy, load_random_policy, train_wf_landscapes
@@ -246,6 +246,10 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
         amp = getattr(hp_args, 'landscape_amplification', 1.0) if hp_args else 1.0
         v_num_drugs = len(define_four_state_landscapes(amplification=amp))
         v_N = 2
+    elif v_dataset == "three_state":
+        amp = getattr(hp_args, 'landscape_amplification', 1.0) if hp_args else 1.0
+        v_num_drugs = len(define_three_state_landscapes(amplification=amp))
+        v_N = 2  # Not used directly by ThreeGenotypeEnv since it hardcodes num_genotypes=3
     else:
         v_num_drugs = 10  # synthetic default
         v_N = hp_args.n_mut if hp_args else 4
@@ -335,6 +339,9 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
         elif v_dataset == "four_state":
             amp = getattr(hp_args, 'landscape_amplification', 1.0) if hp_args else 1.0
             ls = define_four_state_landscapes(amplification=amp)
+        elif v_dataset == "three_state":
+            amp = getattr(hp_args, 'landscape_amplification', 1.0) if hp_args else 1.0
+            ls = define_three_state_landscapes(amplification=amp)
         else: # synthetic
             ls = None # Handled by fallback logic below
         
@@ -351,7 +358,10 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
     # WF uses PPO, so we must load as PPO
     v_random_start = getattr(hp_args, 'random_start', True) if hp_args else True
     v_stochastic = getattr(hp_args, 'stochastic', True) if hp_args else True
-    env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
+    if v_dataset == "three_state":
+        env = ThreeGenotypeEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
+    else:
+        env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, random_start=v_random_start, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
     best_policy = load_best_policy(p, filename=filename, env_type="wf", ppo=True)
     # Update env with WF specific parameters
     if hp_args:
@@ -376,7 +386,10 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
 
     # Evaluate random policy baseline
     random_results_df_plot = None
-    random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
+    if v_dataset == "three_state":
+        random_env = ThreeGenotypeEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
+    else:
+        random_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
     random_results_df_plot = run_sim_tianshou(env=random_env, policy=load_random_policy(p), num_episodes=num_episodes, episode_length=episode_length)
     
     if random_results_df_plot is not None:
@@ -388,7 +401,10 @@ def run_wright_fisher(train: bool, signature: str | None = None, filename: str |
         print("\nEvaluating SHEPHERD MDP baseline...")
         shepherd_mdp = ShepherdMDP.from_env(env, L=getattr(hp_args, 'shepherd_resolution', 3), discount=0.99)
         shepherd_mdp.solve()
-        shepherd_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
+        if v_dataset == "three_state":
+            shepherd_env = ThreeGenotypeEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
+        else:
+            shepherd_env = WrightFisherEnv(num_drugs=v_num_drugs, seq_length=v_N, landscape_list=active_landscapes, gen_per_step=hp_args.gen_per_step if hp_args else 500, reward_scale=hp_args.reward_scale if hp_args else 100.0, stochastic=v_stochastic, delta_multiplier=p.delta_multiplier)
         shepherd_results_df_plot = run_sim_shepherd(env=shepherd_env, mdp_solver=shepherd_mdp, num_episodes=num_episodes, episode_length=episode_length)
         print("\nAverage SHEPHERD WF fitness: ", np.mean(shepherd_results_df_plot["Fitness"]))
     
@@ -626,7 +642,7 @@ if __name__ == "__main__":
     parser.add_argument("--reward-scale", type=float, default=100.0, help="Scale for rewards")
     parser.add_argument("--activation", type=str, default=None, help="Activation function (relu, tanh, swish, etc.)")
     parser.add_argument("--reward-clip", action="store_true", help="Enable reward clipping (default roughly [-5, 5])")
-    parser.add_argument("--dataset", type=str, default="chen", choices=["chen", "four_state", "synthetic"], help="Dataset to use (chen, four_state, or synthetic)")
+    parser.add_argument("--dataset", type=str, default="chen", choices=["chen", "four_state", "three_state", "synthetic"], help="Dataset to use (chen, four_state, three_state, or synthetic)")
     parser.add_argument("--ent-coef", type=float, default=0.05, help="Entropy coefficient for PPO (default: 0.05)")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor (gamma) (default: 0.99)")
     parser.add_argument("--gae-lambda", type=float, default=0.95, help="GAE lambda (default: 0.95)")
