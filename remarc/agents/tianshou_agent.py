@@ -309,9 +309,9 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
     landscape_list = []
     is_three_state = False
 
-    if hasattr(p, "dataset") and p.dataset == "chen":
+    if hasattr(p, "dataset") and p.dataset == "eight_state":
         from remarc.envs import define_chen_landscapes
-        print("Using Chen landscapes for Wright-Fisher training (raw fitness, no normalization).")
+        print("Using Eight-State landscapes for Wright-Fisher training (raw fitness, no normalization).")
         v_N = 3
         chen_data = define_chen_landscapes()
         num_drugs = len(chen_data)

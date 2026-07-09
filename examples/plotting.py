@@ -976,6 +976,183 @@ def plot_population_density_slices(
     return fig
 
 
+
+## Dimensionality reduction + PCA visualization of trajectories
+
+# HELPER: flatten state trajectories into a single array, with optional burn-in and stride
+def flatten_state_trajectories(state_trajectories, burn_in=0, stride=1, max_runs=None, max_steps=None):
+    runs = state_trajectories[:max_runs] if max_runs is not None else state_trajectories
+    samples = []
+    run_ids = []
+    time_ids = []
+
+    for r, traj in enumerate(runs):
+        arr = np.asarray(traj, dtype=float)
+        if max_steps is not None:
+            arr = arr[:max_steps]
+        arr = arr[burn_in::stride]
+        samples.append(arr)
+        run_ids.extend([r] * len(arr))
+        time_ids.extend(list(range(burn_in, burn_in + stride * len(arr), stride)))
+
+    if len(samples) == 0:
+        raise ValueError("No trajectory samples available after burn_in/stride filtering.")
+
+    X = np.vstack(samples)
+    return X, np.asarray(run_ids), np.asarray(time_ids)
+
+
+# HELPER: get mean trajectory across runs, optionally with burn-in and stride
+def mean_trajectory(state_trajectories, burn_in=0, stride=1, max_steps=None):
+    arr = np.asarray(state_trajectories, dtype=float)  # (runs, steps, M)
+    if max_steps is not None:
+        arr = arr[:, :max_steps, :]
+    arr = arr[:, burn_in::stride, :]
+    return arr.mean(axis=0)  # (steps, M)
+
+
+# HELPER: Get CLR transformation of compositional data 
+def clr_transform(X, eps=1e-8):
+    X = np.asarray(X, dtype=float)
+    X = np.clip(X, eps, None)
+    X = X / X.sum(axis=1, keepdims=True)
+    logX = np.log(X)
+    return logX - logX.mean(axis=1, keepdims=True)
+
+# HELPER: PCA on CLR-transformed data
+def run_pca(X, n_components=3):
+    X = np.asarray(X, dtype=float)
+    X_centered = X - X.mean(axis=0, keepdims=True)
+
+    U, S, Vt = np.linalg.svd(X_centered, full_matrices=False)
+    scores = U[:, :n_components] * S[:n_components]
+    components = Vt[:n_components]
+
+    var = (S ** 2) / (X.shape[0] - 1)
+    explained_ratio = var / var.sum()
+    cumulative = np.cumsum(explained_ratio)
+
+    return {
+        "scores": scores,
+        "components": components,
+        "explained_ratio": explained_ratio[:n_components],
+        "cumulative_ratio": cumulative[:n_components],
+        "mean": X.mean(axis=0),
+        "all_explained_ratio": explained_ratio,
+    }
+
+def scores_to_barycentric(scores3, temperature=1.0):
+    Z = np.asarray(scores3, dtype=float)
+    Z = (Z - Z.mean(axis=0, keepdims=True)) / (Z.std(axis=0, keepdims=True) + 1e-12)
+    Z = Z / max(temperature, 1e-12)
+
+    Z = Z - Z.max(axis=1, keepdims=True)
+    W = np.exp(Z)
+    W /= W.sum(axis=1, keepdims=True)
+    return W
+
+def plot_dominant_modes(
+    state_trajectories,
+    genotype_labels=None,
+    burn_in=0,
+    stride=1,
+    max_runs=None,
+    max_steps=None,
+    eps=1e-8,
+    explained_threshold=0.88,
+    show_mean_trajectory=True,
+    show_sample_paths=True,
+    max_paths=20,
+    density=True,
+    simplex_view=True,
+    title="Dominant Tumor Modes",
+):
+    X_raw, run_ids, time_ids = flatten_state_trajectories(
+        state_trajectories,
+        burn_in=burn_in,
+        stride=stride,
+        max_runs=max_runs,
+        max_steps=max_steps,
+    )
+
+    X_clr = clr_transform(X_raw, eps=eps)
+    pca = run_pca(X_clr, n_components=3)
+    scores = pca["scores"]
+    evr = pca["explained_ratio"]
+    cev = pca["cumulative_ratio"]
+
+    mean_traj = mean_trajectory(
+        state_trajectories,
+        burn_in=burn_in,
+        stride=stride,
+        max_steps=max_steps,
+    )
+    mean_scores = None
+    if show_mean_trajectory:
+        mean_scores = (clr_transform(mean_traj, eps=eps) - pca["mean"]) @ pca["components"].T
+
+    if simplex_view and cev[2] >= explained_threshold:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    else:
+        fig, axes = plt.subplots(1, 1, figsize=(6, 5))
+        axes = [axes]
+
+    ax = axes[0]
+
+    if density:
+        hb = ax.hexbin(scores[:, 0], scores[:, 1], gridsize=50, cmap="viridis", mincnt=0)
+        fig.colorbar(hb, ax=ax, label="Sample density")
+    else:
+        ax.scatter(scores[:, 0], scores[:, 1], s=6, alpha=0.2, color="tab:blue")
+
+    if show_sample_paths:
+        unique_runs = np.unique(run_ids)
+        chosen = unique_runs[:max_paths]
+        for r in chosen:
+            idx = np.where(run_ids == r)[0]
+            idx = idx[np.argsort(time_ids[idx])]
+            ax.plot(scores[idx, 0], scores[idx, 1], alpha=0.15, lw=1)
+
+    if mean_scores is not None:
+        ax.plot(mean_scores[:, 0], mean_scores[:, 1], color="red", lw=1.0, alpha = 0.5, label="Mean trajectory")
+        ax.scatter(mean_scores[0, 0], mean_scores[0, 1], color="white", s=40, marker="o", zorder=5)
+        ax.scatter(mean_scores[-1, 0], mean_scores[-1, 1], color="white", s=60, marker="X", zorder=5)
+        ax.legend()
+
+    ax.set_xlabel(f"PC1 ({100 * evr[0]:.1f}%)")
+    ax.set_ylabel(f"PC2 ({100 * evr[1]:.1f}%)")
+    ax.set_title(f"{title}\nPC1+PC2+PC3 = {100 * cev[2]:.1f}% variance")
+
+    if len(axes) > 1:
+        ax2 = axes[1]
+        bary = scores_to_barycentric(scores[:, :3])
+        x, y = _bary_to_cart(bary[:, 0], bary[:, 1], bary[:, 2])
+
+        if density:
+            ax2.hexbin(x, y, gridsize=40, cmap="viridis", mincnt=1)
+        else:
+            ax2.scatter(x, y, s=6, alpha=0.2)
+
+        if mean_scores is not None:
+            mean_bary = scores_to_barycentric(mean_scores[:, :3])
+            mx, my = _bary_to_cart(mean_bary[:, 0], mean_bary[:, 1], mean_bary[:, 2])
+            ax2.plot(mx, my, color="red", lw=1.5, alpha = 0.5, label="Mean trajectory")
+            ax2.scatter(mx[0], my[0], color="white", s=40, marker="o", zorder=5)
+            ax2.scatter(mx[-1], my[-1], color="white", s=60, marker="X", zorder=5)
+
+        outline_x = [0, 1, 0.5, 0]
+        outline_y = [0, 0, _SQRT3_2, 0]
+        ax2.plot(outline_x, outline_y, color="black", lw=1.2)
+        ax2.text(-0.03, -0.04, "PC1-mode", fontsize=8)
+        ax2.text(1.03, -0.04, "PC2-mode", fontsize=8, ha="right")
+        ax2.text(0.5, _SQRT3_2 + 0.04, "PC3-mode", fontsize=8, ha="center")
+        ax2.set_aspect("equal")
+        ax2.axis("off")
+        ax2.set_title("Latent mode simplex")
+
+    fig.tight_layout()
+    return fig, pca
+
 # ──────────────────────────────────────────────────────────────────────
 #  CLI entry point
 # ──────────────────────────────────────────────────────────────────────

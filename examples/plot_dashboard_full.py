@@ -5,6 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import pandas as pd
+from itertools import product
+
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
@@ -12,7 +14,7 @@ sys.path.append(str(project_root))
 from remarc.core.hyperparameters import Presets as P
 from remarc.agents.tianshou_agent import get_ppo_policy, load_best_fn, RandomPolicy, SingleDrugPolicy, train_wf_landscapes
 from remarc.envs.wright_fisher_env import WrightFisherEnv
-from remarc.envs.utils import define_four_state_landscapes, define_three_state_landscapes
+from remarc.envs.utils import define_four_state_landscapes, define_three_state_landscapes, define_chen_landscapes
 from remarc.core.landscapes import Landscape
 from tianshou.env import DummyVectorEnv
 from tianshou.data import Batch
@@ -26,8 +28,13 @@ from examples.plotting import (
     plot_policy_difference_slices,
     plot_policy_magnitude_difference_slices,
     plot_population_density_slices,
-    greedy_policy
+    greedy_policy,
+    plot_dominant_modes
 )
+
+def binary_indices(N):
+    return [''.join(bits) for bits in product('01', repeat=N)]
+
 
 def run_eval(env, policy, agent_type="RL", num_runs=10, episode_steps=1000, drug_idx = 0): # DRUG INDEX NOT USED UNLESS SINGLE DRUG POLICY
     all_fit = []
@@ -96,14 +103,15 @@ def main():
     EVAL_STEPS    = 5000
     EVAL_RUNS     = 100
     n_frames      = 1
-    delta         = 1.0
-    delta_horizon = 5
+    delta         = 0.5
+    delta_horizon = 1
     gps           = 10
     gamma         = 0.99
     ent           = 0.1
     batch         = 64
-    DATASET       = "four_state"  # Change to "Three_state" to use 3-state system
-    L             = 35
+    DATASET       = "four_state"  # Accepts "three_state", "four_state", or "eight_state"
+    L             = 3
+    TRAIN         = False # Set to True to train the model, False to load existing model
 
 
     
@@ -127,11 +135,18 @@ def main():
 
     if DATASET == "three_state":
         landscape_data = define_three_state_landscapes(amplification=AMP)
-    else:
+        v_N = 2
+    elif DATASET == "four_state":
         landscape_data = define_four_state_landscapes(amplification=AMP)
+    elif DATASET == "eight_state":
+        landscape_data = define_chen_landscapes()  
+    else:
+        raise ValueError(f"Unknown dataset: {DATASET}")
 
-    num_drugs = len(landscape_data)
-    v_N = 2
+    num_drugs = landscape_data.shape[0]
+    if DATASET != "three_state":
+        v_N = int(np.log2(len(landscape_data[0])))
+
     g_min, g_max = np.min(landscape_data), np.max(landscape_data)
     landscape_list = [Landscape(v_N, sigma=0.0, ls=landscape_data[i], g_min=g_min, g_max=g_max)
                       for i in range(num_drugs)]
@@ -188,11 +203,16 @@ def main():
 
     # Load policy if it exists, else train
 
-    try:
-        policy = get_ppo_policy(p, test_envs).eval()
-        policy = load_best_fn(policy, f"best_policy_{sig}.pth")
-    except Exception:
-        #run the training
+    if not TRAIN:
+        try:
+            policy = get_ppo_policy(p, test_envs).eval()
+            policy = load_best_fn(policy, f"best_policy_{sig}.pth")
+        except Exception:
+            #run the training
+            train_wf_landscapes(p, signature=sig)
+            policy = get_ppo_policy(p, test_envs).eval()
+            policy = load_best_fn(policy, f"best_policy_{sig}.pth")
+    else:
         train_wf_landscapes(p, signature=sig)
         policy = get_ppo_policy(p, test_envs).eval()
         policy = load_best_fn(policy, f"best_policy_{sig}.pth")
@@ -294,171 +314,212 @@ def main():
         genotype_labels = ["0", "1", "2"]
         is_three_state = True
     else:
-        genotype_labels = ["00", "01", "10", "11"]
+        genotype_labels = binary_indices(v_N)
         is_three_state = False
     
-    # 2. Population distribution simplexes
-    print("Plotting Population Distribution Simplexes...")
-    fig = plot_population_density_slices(
-        state_trajectories=rl_states,
-        policy_fn=rl_policy_fn,
-        greedy_policy_fn=gr_policy_fn,
-        num_drugs=num_drugs,
-        is_three_state=is_three_state
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_pop_density.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
 
-    # 3. Policy simplexes
-    print("Plotting Policy Simplexes...")
-    fig = plot_simplex_policy_slices(
-        policy_fn=rl_policy_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title=f"Learned Policy: {sig}",
-        is_three_state=is_three_state
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_policy.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+    # 2. Dominant Modes/PCA Analysis
+    print("Plotting Dominant Modes (PCA Analysis)...")
 
-    fig = plot_simplex_policy_slices(
-        policy_fn=gr_policy_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="Greedy Policy",
-        is_three_state=is_three_state
+    fig_rl, pca_info = plot_dominant_modes(
+    rl_states,
+    burn_in=100,
+    stride=5,
+    explained_threshold=0.88,
+    title="Dominant Modes (RL Policy)",
     )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_greedy_policy.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+    fig_rl.savefig(str(project_root / 'log' / f'{sig}_dominant_modes_remarc.png'), dpi=200, bbox_inches='tight')
+    plt.close(fig_rl)
 
-    fig = plot_simplex_policy_slices(
-        policy_fn=shepherd_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="SHEPHERD Policy (L=20)",
-        is_three_state=is_three_state
+    print("REMARC PCA Info:", pca_info)
+
+    fig_gr, pca_info = plot_dominant_modes(
+    gr_states,
+    burn_in=100,
+    stride=5,
+    explained_threshold=0.88,
+    title="Dominant Modes (Greedy Policy)",
     )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_policy.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+    fig_gr.savefig(str(project_root / 'log' / f'{sig}_dominant_modes_greedy.png'), dpi=200, bbox_inches='tight')
+    plt.close(fig_rl)
 
-    # 4. Population fitness under policy simplexes
-    print("Plotting Policy Fitness Landscape Slices...")
-    fig = plot_policy_fitness_landscape_slices(
-        policy_fn=rl_policy_fn,
-        landscapes=landscape_data,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="Normalized Fitness Landscape (Learned Policy)",
-        is_three_state=is_three_state
+    print("Greedy PCA Info:", pca_info)
+
+    fig_sh, pca_info = plot_dominant_modes(
+    sh_states,
+    burn_in=100,
+    stride=5,
+    explained_threshold=0.88,
+    title="Dominant Modes (SHEPHED Policy)",
     )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_fitness_landscape.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+    fig_sh.savefig(str(project_root / 'log' / f'{sig}_dominant_modes_shepherd.png'), dpi=200, bbox_inches='tight')
+    plt.close(fig_rl)
 
-    # 5. Disagreement plots
-    print("Plotting Policy Disagreement...")
-    fig = plot_policy_difference_slices(
-        policy_fn_1=rl_policy_fn,
-        policy_fn_2=gr_policy_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="Policy Disagreement (Learned vs Greedy)",
-        is_three_state=is_three_state
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_disagreement.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+    print("SHEPHERD PCA Info:", pca_info)
 
-    # 6. Absolute disagreement plots
-    print("Plotting Absolute Disagreement (Greedy)...")
-    fig = plot_policy_magnitude_difference_slices(
-        policy_fn_1=rl_policy_fn,
-        policy_fn_2=gr_policy_fn,
-        landscapes=landscape_data,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="Absolute Policy Fitness Difference (Learned vs Greedy)",
-        is_three_state=is_three_state
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+    if DATASET != "eight_state":
+            # 2. Population distribution simplexes
+            print("Plotting Population Distribution Simplexes...")
+            fig = plot_population_density_slices(
+                state_trajectories=rl_states,
+                policy_fn=rl_policy_fn,
+                greedy_policy_fn=gr_policy_fn,
+                num_drugs=num_drugs,
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_pop_density.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
 
-    # 7. Disagreement plots (Learned vs SHEPHERD)
-    print("Plotting Policy Disagreement (SHEPHERD)...")
-    fig = plot_policy_difference_slices(
-        policy_fn_1=rl_policy_fn,
-        policy_fn_2=shepherd_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="Policy Disagreement (Learned vs SHEPHERD)",
-        is_three_state=is_three_state
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_disagreement.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+            # 3. Policy simplexes
+            print("Plotting Policy Simplexes...")
+            fig = plot_simplex_policy_slices(
+                policy_fn=rl_policy_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title=f"Learned Policy: {sig}",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_policy.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
 
-    # 8. Absolute disagreement plots (Learned vs SHEPHERD)
-    print("Plotting Absolute Disagreement (SHEPHERD)...")
-    fig = plot_policy_magnitude_difference_slices(
-        policy_fn_1=rl_policy_fn,
-        policy_fn_2=shepherd_fn,
-        landscapes=landscape_data,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title="Absolute Policy Fitness Difference (Learned vs SHEPHERD)",
-        is_three_state=is_three_state
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+            fig = plot_simplex_policy_slices(
+                policy_fn=gr_policy_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title="Greedy Policy",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_greedy_policy.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
+
+            fig = plot_simplex_policy_slices(
+                policy_fn=shepherd_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title=f"SHEPHERD Policy (L={L})",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_policy.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
+
+            # 4. Population fitness under policy simplexes
+            print("Plotting Policy Fitness Landscape Slices...")
+            fig = plot_policy_fitness_landscape_slices(
+                policy_fn=rl_policy_fn,
+                landscapes=landscape_data,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title="Normalized Fitness Landscape (Learned Policy)",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_fitness_landscape.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
+
+            # 5. Disagreement plots
+            print("Plotting Policy Disagreement...")
+            fig = plot_policy_difference_slices(
+                policy_fn_1=rl_policy_fn,
+                policy_fn_2=gr_policy_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title="Policy Disagreement (Learned vs Greedy)",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_disagreement.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
+
+            # 6. Absolute disagreement plots
+            print("Plotting Absolute Disagreement (Greedy)...")
+            fig = plot_policy_magnitude_difference_slices(
+                policy_fn_1=rl_policy_fn,
+                policy_fn_2=gr_policy_fn,
+                landscapes=landscape_data,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title="Absolute Policy Fitness Difference (Learned vs Greedy)",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
+
+            # 7. Disagreement plots (Learned vs SHEPHERD)
+            print("Plotting Policy Disagreement (SHEPHERD)...")
+            fig = plot_policy_difference_slices(
+                policy_fn_1=rl_policy_fn,
+                policy_fn_2=shepherd_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title="Policy Disagreement (Learned vs SHEPHERD)",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_disagreement.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
+
+            # 8. Absolute disagreement plots (Learned vs SHEPHERD)
+            print("Plotting Absolute Disagreement (SHEPHERD)...")
+            fig = plot_policy_magnitude_difference_slices(
+                policy_fn_1=rl_policy_fn,
+                policy_fn_2=shepherd_fn,
+                landscapes=landscape_data,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title="Absolute Policy Fitness Difference (Learned vs SHEPHERD)",
+                is_three_state=is_three_state
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_shepherd_magnitude_disagreement.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
 
 
-    # 9. Steady state frequencies on decision boundaries
-    print("Plotting Steady State Frequencies over Decision Boundary...")
-    rl_final = np.array([run[-1] for run in rl_states])
-    sh_final = np.array([run[-1] for run in sh_states])
-    gr_final = np.array([run[-1] for run in gr_states])
-    
-    fig = plot_simplex_policy_slices(
-        policy_fn=rl_policy_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title=f"Steady State (Learned Policy)",
-        is_three_state=is_three_state,
-        scatter_states=rl_final
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_RL.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+            # 9. Steady state frequencies on decision boundaries
+            print("Plotting Steady State Frequencies over Decision Boundary...")
+            rl_final = np.array([run[-1] for run in rl_states])
+            sh_final = np.array([run[-1] for run in sh_states])
+            gr_final = np.array([run[-1] for run in gr_states])
+            
+            fig = plot_simplex_policy_slices(
+                policy_fn=rl_policy_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title=f"Steady State (Learned Policy)",
+                is_three_state=is_three_state,
+                scatter_states=rl_final
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_RL.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
 
-    fig = plot_simplex_policy_slices(
-        policy_fn=shepherd_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title=f"Steady State (SHEPHERD Policy)",
-        is_three_state=is_three_state,
-        scatter_states=sh_final
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_SHEPHERD.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+            fig = plot_simplex_policy_slices(
+                policy_fn=shepherd_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title=f"Steady State (SHEPHERD Policy)",
+                is_three_state=is_three_state,
+                scatter_states=sh_final
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_SHEPHERD.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
 
-    fig = plot_simplex_policy_slices(
-        policy_fn=gr_policy_fn,
-        num_drugs=num_drugs,
-        genotype_labels=genotype_labels,
-        title=f"Steady State (Greedy Policy)",
-        is_three_state=is_three_state,
-        scatter_states=gr_final
-    )
-    if fig is not None:
-        fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_Greedy.png'), dpi=200, bbox_inches='tight')
-        plt.close(fig)
+            fig = plot_simplex_policy_slices(
+                policy_fn=gr_policy_fn,
+                num_drugs=num_drugs,
+                genotype_labels=genotype_labels,
+                title=f"Steady State (Greedy Policy)",
+                is_three_state=is_three_state,
+                scatter_states=gr_final
+            )
+            if fig is not None:
+                fig.savefig(str(project_root / 'log' / f'{sig}_dashboard_steady_state_Greedy.png'), dpi=200, bbox_inches='tight')
+                plt.close(fig)
 
     # 10. Frequency trajectories
     print("Plotting Frequency Trajectories...")

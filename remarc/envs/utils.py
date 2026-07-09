@@ -70,7 +70,7 @@ def fast_choice(options, probs):
             return options[i]
     return options[-1]
 
-def define_chen_landscapes(as_dict=False, center_at_zero=False):
+def define_chen_landscapes(as_dict=False, center_at_zero=False) -> np.ndarray :
     """
     Chen et al. fitness landscapes for 8 genotypes (N=3) and 4 drugs.
     Source: Chen et al. evolutionary dynamics paper
