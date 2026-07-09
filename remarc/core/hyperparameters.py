@@ -26,6 +26,7 @@ class Presets:
     stochastic: bool = True
     n_frames: int = 1
     delta_horizon: int = 1
+    
 
     @staticmethod
     def p1_ss():

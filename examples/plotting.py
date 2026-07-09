@@ -947,9 +947,6 @@ def plot_population_density_slices(
             
             levels = np.arange(0.5, num_drugs, 1.0)
             
-            if greedy_policy_fn is not None:
-                ax.tricontour(triangulation, greedy_actions, levels=levels, colors='white', linewidths=1.5, linestyles=':', zorder=9)
-                
             if policy_fn is not None:
                 # Draw boundary lines where policy changes actions
                 ax.tricontour(triangulation, actions, levels=levels, colors='red', linewidths=1.5, linestyles='--', zorder=10)
