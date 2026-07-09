@@ -608,7 +608,7 @@ def plot_simplex_section(tab_id):
                 
                 from examples.plotting import plot_policy_fitness_landscape_slices
                 st.subheader("Simplex Visualization: Normalized Fitness (RL Policy)")
-                st.caption("Heatmap of normalized fitness under the drug chosen by the RL policy. Lower is better (darker). White dashed lines indicate drug boundaries.")
+                st.caption("Heatmap of normalized fitness under the drug chosen by the RL policy. Lower is better (darker). Red dashed lines indicate drug boundaries.")
                 fig_fitness = plot_policy_fitness_landscape_slices(
                     policy_fn=trained_fn,
                     landscapes=landscapes,

@@ -363,7 +363,7 @@ class TestIntegration:
             Landscape(N=2, sigma=0.0, ls=np.array([1.0, 1.1, 0.9, 1.05])),
             Landscape(N=2, sigma=0.0, ls=np.array([0.95, 1.0, 1.1, 0.9])),
         ]
-        train_envs, test_envs = WrightFisherEnv.getEnv(
+        train_envs, test_envs = WrightFisherEnv.get_env(
             2, 1, landscape_list=landscapes, seq_length=2,
             gen_per_step=10, episode_steps=5, stochastic=False
         )

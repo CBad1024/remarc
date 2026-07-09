@@ -257,10 +257,15 @@ class WrightFisherEnv(gym.Env):
         # Delta bonus: reward the agent for reducing fitness vs previous step(s).
         self.fitness_history.append(avg_fit)
         if len(self.fitness_history) == self.delta_horizon:
-            delta = self.fitness_history[0] - avg_fit  # positive when fitness drops
+            delta_long = self.fitness_history[0] - avg_fit  # positive when fitness drops
             # Restore a balanced delta bonus. 
             # 1.0 multiplier gives it equal weight to the absolute fitness.
-            reward += delta * self.reward_scale * self.delta_multiplier
+            reward += delta_long * self.reward_scale * self.delta_multiplier 
+
+            # NOTE: Let's also add an additional delta by immediate change in fitness.
+            delta_short = self.fitness_history[-1] - avg_fit
+            reward += delta_short * self.reward_scale * self.delta_multiplier 
+
 
         terminated = self.generation >= self.total_generations
         truncated = False  # Gymnasium requires this explicitly
@@ -311,17 +316,17 @@ class WrightFisherEnv(gym.Env):
     # ------------------------------------------------------------------
 
     @classmethod
-    def getEnv(cls, n_train, n_test, landscape_list=None, num_drugs=10,
+    def get_env(cls, n_train, n_test, landscape_list=None, num_drugs=10,
                gen_per_step=25, seq_length=4, random_start=False,
                episode_steps=20, reward_scale=1.0, stochastic=True, delta_multiplier=0.0,
-               mutation_rate=1e-4, n_frames=1):
+               mutation_rate=1e-4, n_frames=1, delta_horizon = 1):
         total_generations = gen_per_step * episode_steps
         fn_train = functools.partial(
             _make_env_train, landscape_list, num_drugs, gen_per_step,
-            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames)
+            seq_length, random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames, delta_horizon)
         fn_test = functools.partial(
             _make_env_test, landscape_list, num_drugs, gen_per_step,
-            seq_length, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames)
+            seq_length, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames, delta_horizon)
         train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
         test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
@@ -384,23 +389,23 @@ class ThreeGenotypeEnv(WrightFisherEnv):
 # --------------------------------------------------------------------------
 
 def _make_env_train(landscape_list, num_drugs, gen_per_step, seq_length,
-                    random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames):
+                    random_start, total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames, delta_horizon):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=random_start, total_generations=total_generations,
         reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
-        mutation_rate=mutation_rate, n_frames=n_frames)
+        mutation_rate=mutation_rate, n_frames=n_frames, delta_horizon=delta_horizon)
 
 
 def _make_env_test(landscape_list, num_drugs, gen_per_step, seq_length,
-                   total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames):
+                   total_generations, reward_scale, stochastic, delta_multiplier, mutation_rate, n_frames, delta_horizon):
     return WrightFisherEnv(
         landscape_list=landscape_list, num_drugs=num_drugs,
         gen_per_step=gen_per_step, seq_length=seq_length,
         random_start=False, total_generations=total_generations,
         reward_scale=reward_scale, stochastic=stochastic, delta_multiplier=delta_multiplier,
-        mutation_rate=mutation_rate, n_frames=n_frames)
+        mutation_rate=mutation_rate, n_frames=n_frames, delta_horizon=delta_horizon)
 
 
 def _make_three_env_train(landscape_list, num_drugs, gen_per_step, seq_length,

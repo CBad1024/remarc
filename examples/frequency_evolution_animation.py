@@ -394,7 +394,7 @@ def create_frequency_gif(
 
     if os.path.exists(policy_path):
         from remarc.agents.tianshou_agent import get_ppo_policy
-        _train_envs, _ = WrightFisherEnv.getEnv(2, 2,
+        _train_envs, _ = WrightFisherEnv.get_env(2, 2,
                                                    landscape_list=landscape_list)
         opt_policy = get_ppo_policy(p, _train_envs)
         try:

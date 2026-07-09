@@ -10,7 +10,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from remarc.core.hyperparameters import Presets as P
-from remarc.agents.tianshou_agent import get_ppo_policy, load_best_fn, RandomPolicy, SingleDrugPolicy
+from remarc.agents.tianshou_agent import get_ppo_policy, load_best_fn, RandomPolicy, SingleDrugPolicy, train_wf_landscapes
 from remarc.envs.wright_fisher_env import WrightFisherEnv
 from remarc.envs.utils import define_four_state_landscapes, define_three_state_landscapes
 from remarc.core.landscapes import Landscape
@@ -83,13 +83,13 @@ def run_eval(env, policy, agent_type="RL", num_runs=10, episode_steps=1000, drug
     return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_states
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--arch", type=str, default="256", choices=["32", "64", "128", "256", "baseline"], help="Network architecture size")
-    args = parser.parse_args()
+    # import argparse
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--arch", type=str, default="256", choices=["32", "64", "128", "256", "baseline"], help="Network architecture size")
+    # args = parser.parse_args()
     LR            = 1e-4
     MR            = 1e-5
-    EPOCHS        = 150
+    EPOCHS        = 300
     EPISODE_STEPS = 500
     REWARD_SCALE  = 100.0
     AMP           = 1.0
@@ -97,28 +97,33 @@ def main():
     EVAL_RUNS     = 100
     n_frames      = 1
     delta         = 1.0
+    delta_horizon = 5
     gps           = 10
     gamma         = 0.99
     ent           = 0.1
     batch         = 64
-    DATASET       = "three_state"  # Change to "Three_state" to use 3-state system
-    L             = 30
-    
-    if args.arch == "baseline":
-        sig = f"{DATASET}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
-    else:
-        sig = f"Three State_net{args.arch}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
+    DATASET       = "four_state"  # Change to "Three_state" to use 3-state system
+    L             = 35
 
-    if args.arch == "32":
-        hidden, head = [32, 32], [32]
-    elif args.arch == "64":
-        hidden, head = [64, 64], [64]
-    elif args.arch == "128":
-        hidden, head = [128, 128], [128]
-    elif args.arch == "256":
-        hidden, head = [256, 256, 256], [128]
-    else:
-        hidden, head = [256, 256, 256], [128] # Baseline uses 256 architecture
+
+    
+    sig = f"{DATASET}_dh_{delta_horizon}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
+
+    # if args.arch == "baseline":
+    #     sig = f"{DATASET}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
+    # else:
+    #     sig = f"Three State_net{args.arch}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
+
+    # if args.arch == "32":
+    #     hidden, head = [32, 32], [32]
+    # elif args.arch == "64":
+    #     hidden, head = [64, 64], [64]
+    # elif args.arch == "128":
+    #     hidden, head = [128, 128], [128]
+    # elif args.arch == "256":
+    #     hidden, head = [256, 256, 256], [128]
+    # else:
+    hidden, head = [256, 256, 256], [128] # Baseline uses 256 architecture
 
     if DATASET == "three_state":
         landscape_data = define_three_state_landscapes(amplification=AMP)
@@ -151,7 +156,8 @@ def main():
         delta_multiplier=delta,
         stochastic=True,
         random_start=True,
-        n_frames=n_frames
+        n_frames=n_frames,
+        delta_horizon = delta_horizon
     )
     object.__setattr__(p, 'mutation_rate', MR)
     object.__setattr__(p, 'n_train_envs', 16)
@@ -170,7 +176,8 @@ def main():
         stochastic=True,
         delta_multiplier=delta,
         mutation_rate=MR,
-        n_frames=n_frames
+        n_frames=n_frames,
+        delta_horizon = delta_horizon
     )
     if DATASET == "three_state":
         eval_env = ThreeGenotypeEnv(**env_kwargs)
@@ -178,8 +185,17 @@ def main():
         eval_env = WrightFisherEnv(**env_kwargs)
 
     test_envs = DummyVectorEnv([lambda: eval_env])
-    policy = get_ppo_policy(p, test_envs).eval()
-    policy = load_best_fn(policy, f"best_policy_{sig}.pth")
+
+    # Load policy if it exists, else train
+
+    try:
+        policy = get_ppo_policy(p, test_envs).eval()
+        policy = load_best_fn(policy, f"best_policy_{sig}.pth")
+    except Exception:
+        #run the training
+        train_wf_landscapes(p, signature=sig)
+        policy = get_ppo_policy(p, test_envs).eval()
+        policy = load_best_fn(policy, f"best_policy_{sig}.pth")
     
     shepherd_mdp = ShepherdMDP.from_env(eval_env, L=L, discount=0.99)
     cache_path = project_root / 'log' / f'shepherd_L{L}_{DATASET}.npz'

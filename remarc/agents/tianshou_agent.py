@@ -382,7 +382,7 @@ def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial
     
     EnvClass = ThreeGenotypeEnv if is_three_state else WrightFisherEnv
     
-    train_envs, test_envs = EnvClass.getEnv(
+    train_envs, test_envs = EnvClass.get_env(
         getattr(p, "n_train_envs", 4), getattr(p, "n_test_envs", 2),
         landscape_list=landscape_list,
         gen_per_step=getattr(p, "gen_per_step", 500),
