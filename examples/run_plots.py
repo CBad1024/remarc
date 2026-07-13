@@ -127,15 +127,15 @@ def main():
     EVAL_STEPS = 5000
     EVAL_RUNS = 100
     n_frames = 1
-    delta = 0.5
-    delta_horizon = 5
+    delta = args.delta
+    delta_horizon = args.dh
     gps = 10
     gamma = 0.99
     ent = 0.1
     batch = 64
-    DATASET = "three_state"  # Accepts "three_state", "four_state", or "eight_state"
-    L = 35  # SHEPHERD horizon length
-    TRAIN = False  # Set to True to train the model, False to load existing model
+    DATASET = args.dataset
+    L = args.L
+    TRAIN = args.train
 
     sig = f"{DATASET}_dh_{delta_horizon}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
 
