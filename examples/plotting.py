@@ -9,10 +9,12 @@ Includes:
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib.colors import to_rgb
 import matplotlib as mpl
 from matplotlib.tri import Triangulation
 from matplotlib.patches import Patch, FancyArrowPatch
 from matplotlib.collections import PolyCollection
+from matplotlib.patches import Rectangle
 
 from remarc.envs.wright_fisher_env import WrightFisherEnv
 
@@ -1051,8 +1053,286 @@ def scores_to_barycentric(scores3, temperature=1.0):
     W /= W.sum(axis=1, keepdims=True)
     return W
 
+
+
+
+
+
+def _flatten_aligned_trajectories(
+    state_trajectories,
+    policy_trajectories=None,
+    fitness_trajectories=None,
+    burn_in=0,
+    stride=1,
+    max_runs=None,
+    max_steps=None,
+):
+    runs = state_trajectories[:max_runs] if max_runs is not None else state_trajectories
+
+    X_list = []
+    run_ids = []
+    time_ids = []
+    pol_list = []
+    fit_list = []
+
+    for r, traj in enumerate(runs):
+        Xr = np.asarray(traj, dtype=float)
+        if max_steps is not None:
+            Xr = Xr[:max_steps]
+        Xr = Xr[burn_in::stride]
+
+        T = len(Xr)
+        if T == 0:
+            continue
+
+        X_list.append(Xr)
+        run_ids.extend([r] * T)
+        time_ids.extend(np.arange(burn_in, burn_in + stride * T, stride))
+
+        if policy_trajectories is not None:
+            pr = np.asarray(policy_trajectories[r])
+            if max_steps is not None:
+                pr = pr[:max_steps]
+            pr = pr[burn_in::stride]
+            pol_list.append(pr)
+
+        if fitness_trajectories is not None:
+            fr = np.asarray(fitness_trajectories[r], dtype=float)
+            if max_steps is not None:
+                fr = fr[:max_steps]
+            fr = fr[burn_in::stride]
+            fit_list.append(fr)
+
+    if len(X_list) == 0:
+        raise ValueError("No samples left after filtering.")
+
+    X = np.vstack(X_list)
+    run_ids = np.asarray(run_ids)
+    time_ids = np.asarray(time_ids)
+    policies = np.concatenate(pol_list) if policy_trajectories is not None else None
+    fitness = np.concatenate(fit_list) if fitness_trajectories is not None else None
+    return X, run_ids, time_ids, policies, fitness
+
+
+def _lighten_color(color, amount=0.5):
+    c = np.array(to_rgb(color))
+    white = np.ones(3)
+    return tuple((1 - amount) * white + amount * c)
+
+
+def _policy_boundary_plot(
+    ax,
+    x,
+    y,
+    policies,
+    fitness,
+    drug_colors,
+    gridsize=60,
+    min_points=3,
+    boundary=True,
+):
+    x = np.asarray(x)
+    y = np.asarray(y)
+    policies = np.asarray(policies)
+    fitness = np.asarray(fitness, dtype=float)
+
+    xmin, xmax = x.min(), x.max()
+    ymin, ymax = y.min(), y.max()
+
+    gx = np.linspace(xmin, xmax, gridsize + 1)
+    gy = np.linspace(ymin, ymax, gridsize + 1)
+
+    ix = np.clip(np.digitize(x, gx) - 1, 0, gridsize - 1)
+    iy = np.clip(np.digitize(y, gy) - 1, 0, gridsize - 1)
+
+    policy_grid = np.full((gridsize, gridsize), -1, dtype=int)
+    fit_grid = np.full((gridsize, gridsize), np.nan, dtype=float)
+    count_grid = np.zeros((gridsize, gridsize), dtype=int)
+
+    for i in range(gridsize):
+        for j in range(gridsize):
+            mask = (ix == i) & (iy == j)
+            n = mask.sum()
+            count_grid[j, i] = n
+            if n < min_points:
+                continue
+
+            pols = policies[mask].astype(int)
+            vals, counts = np.unique(pols, return_counts=True)
+            majority_policy = vals[np.argmax(counts)]
+            policy_grid[j, i] = majority_policy
+            fit_grid[j, i] = fitness[mask].mean()
+
+    valid = np.isfinite(fit_grid)
+    if not np.any(valid):
+        raise ValueError("No valid bins for policy boundary plot.")
+
+    fmin = np.nanmin(fit_grid)
+    fmax = np.nanmax(fit_grid)
+    denom = max(fmax - fmin, 1e-12)
+
+    dx = gx[1] - gx[0]
+    dy = gy[1] - gy[0]
+
+    for j in range(gridsize):
+        for i in range(gridsize):
+            pol = policy_grid[j, i]
+            if pol < 0:
+                continue
+
+            base = drug_colors[pol]
+            f = fit_grid[j, i]
+            normf = (f - fmin) / denom
+
+            # lower fitness -> lighter, higher fitness -> closer to base color
+            face = _lighten_color(base, amount=0.25 + 0.75 * normf)
+
+            rect = Rectangle(
+                (gx[i], gy[j]),
+                dx,
+                dy,
+                facecolor=face,
+                edgecolor="none",
+                linewidth=0,
+                zorder=1,
+            )
+            ax.add_patch(rect)
+
+    if boundary:
+        Xc = 0.5 * (gx[:-1] + gx[1:])
+        Yc = 0.5 * (gy[:-1] + gy[1:])
+        XX, YY = np.meshgrid(Xc, Yc)
+
+        masked = np.ma.masked_where(policy_grid < 0, policy_grid)
+        levels = np.arange(np.nanmax(policy_grid) + 2) - 0.5
+        ax.contour(
+            XX,
+            YY,
+            masked,
+            levels=levels,
+            colors="k",
+            linewidths=0.8,
+            alpha=0.75,
+            zorder=2,
+        )
+
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+
+    return {
+        "policy_grid": policy_grid,
+        "fitness_grid": fit_grid,
+        "count_grid": count_grid,
+        "fitness_min": fmin,
+        "fitness_max": fmax,
+    }
+
+def clr_inverse(Z):
+    Z = np.asarray(Z, dtype=float)
+    Z = Z - Z.max(axis=1, keepdims=True)
+    E = np.exp(Z)
+    return E / E.sum(axis=1, keepdims=True)
+
+def pca_inverse_transform(scores, pca):
+    scores = np.asarray(scores, dtype=float)
+    return scores @ pca["components"] + pca["mean"]
+
+def _mix_with_white(color, t):
+    """
+    t in [0,1]. t=0 -> white, t=1 -> original color
+    """
+    rgb = np.array(mcolors.to_rgb(color))
+    return tuple((1 - t) * np.ones(3) + t * rgb)
+
+def _latent_policy_grid(
+    pca,
+    xlim,
+    ylim,
+    policy_fn,
+    fitness_fn,
+    grid_n=100,
+    pc3_value=0.0,
+):
+    xs = np.linspace(xlim[0], xlim[1], grid_n)
+    ys = np.linspace(ylim[0], ylim[1], grid_n)
+    XX, YY = np.meshgrid(xs, ys)
+
+    scores_grid = np.column_stack([
+        XX.ravel(),
+        YY.ravel(),
+        np.full(XX.size, pc3_value, dtype=float),
+    ])
+
+    clr_grid = pca_inverse_transform(scores_grid, pca)
+    comp_grid = clr_inverse(clr_grid)
+
+    actions = np.array([policy_fn(state) for state in comp_grid], dtype=int)
+    fitness = np.array([fitness_fn(state, a) for state, a in zip(comp_grid, actions)], dtype=float)
+
+    return XX, YY, actions.reshape(XX.shape), fitness.reshape(XX.shape)
+
+def _draw_latent_policy_map(
+    ax,
+    XX,
+    YY,
+    action_grid,
+    fitness_grid,
+    num_drugs,
+    drug_colors,
+    show_boundary=True,
+):
+    valid = np.isfinite(fitness_grid)
+    fmin = np.nanmin(fitness_grid[valid])
+    fmax = np.nanmax(fitness_grid[valid])
+    denom = max(fmax - fmin, 1e-12)
+
+    nx = XX.shape[1]
+    ny = XX.shape[0]
+    dx = XX[0, 1] - XX[0, 0]
+    dy = YY[1, 0] - YY[0, 0]
+
+    for j in range(ny):
+        for i in range(nx):
+            a = int(action_grid[j, i])
+            if a < 0 or a >= num_drugs:
+                continue
+
+            # lower fitness -> lighter, higher fitness -> more saturated
+            normf = (fitness_grid[j, i] - fmin) / denom
+            face = _mix_with_white(drug_colors[a], 0.20 + 0.80 * normf)
+
+            ax.add_patch(
+                Rectangle(
+                    (XX[j, i] - dx / 2, YY[j, i] - dy / 2),
+                    dx,
+                    dy,
+                    facecolor=face,
+                    edgecolor="none",
+                    linewidth=0,
+                    zorder=1,
+                )
+            )
+
+    if show_boundary:
+        levels = np.arange(-0.5, num_drugs + 0.5, 1)
+        ax.contour(
+            XX, YY, action_grid,
+            levels=levels,
+            colors="k",
+            linewidths=0.7,
+            alpha=0.7,
+            zorder=2,
+        )
+
+    return fmin, fmax
+
 def plot_dominant_modes(
     state_trajectories,
+    policy_fn=None,
+    fitness_fn=None,
+    num_drugs=4,
+    drug_labels=None,
+    drug_colors=None,
     genotype_labels=None,
     burn_in=0,
     stride=1,
@@ -1061,12 +1341,23 @@ def plot_dominant_modes(
     eps=1e-8,
     explained_threshold=0.88,
     show_mean_trajectory=True,
-    show_sample_paths=True,
+    show_sample_paths=False,
     max_paths=20,
     density=True,
     simplex_view=True,
     title="Dominant Tumor Modes",
+    latent_grid_n=100,
+    latent_pc3="mean",
+    show_policy_boundary=True,
+    show_legend=True,
 ):
+    # defaults aligned with plot_simplex_policy_slices
+    if drug_labels is None:
+        drug_labels = [f"Drug {chr(65 + i)}" for i in range(num_drugs)]
+    if drug_colors is None:
+        drug_colors = ["#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+                       "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c"][:num_drugs]
+
     X_raw, run_ids, time_ids = flatten_state_trajectories(
         state_trajectories,
         burn_in=burn_in,
@@ -1087,6 +1378,7 @@ def plot_dominant_modes(
         stride=stride,
         max_steps=max_steps,
     )
+
     mean_scores = None
     if show_mean_trajectory:
         mean_scores = (clr_transform(mean_traj, eps=eps) - pca["mean"]) @ pca["components"].T
@@ -1099,11 +1391,77 @@ def plot_dominant_modes(
 
     ax = axes[0]
 
-    if density:
-        hb = ax.hexbin(scores[:, 0], scores[:, 1], gridsize=50, cmap="viridis", mincnt=0)
-        fig.colorbar(hb, ax=ax, label="Sample density")
+    use_policy_map = (policy_fn is not None) and (fitness_fn is not None)
+
+    if use_policy_map:
+        xpad = 0.05 * max(scores[:, 0].ptp(), 1e-6)
+        ypad = 0.05 * max(scores[:, 1].ptp(), 1e-6)
+        xlim = (scores[:, 0].min() - xpad, scores[:, 0].max() + xpad)
+        ylim = (scores[:, 1].min() - ypad, scores[:, 1].max() + ypad)
+
+        if latent_pc3 == "mean":
+            pc3_value = float(np.mean(scores[:, 2]))
+        elif latent_pc3 == "median":
+            pc3_value = float(np.median(scores[:, 2]))
+        else:
+            pc3_value = float(latent_pc3)
+
+        XX, YY, action_grid, fitness_grid = _latent_policy_grid(
+            pca=pca,
+            xlim=xlim,
+            ylim=ylim,
+            policy_fn=policy_fn,
+            fitness_fn=fitness_fn,
+            grid_n=latent_grid_n,
+            pc3_value=pc3_value,
+        )
+
+        fmin, fmax = _draw_latent_policy_map(
+            ax,
+            XX,
+            YY,
+            action_grid,
+            fitness_grid,
+            num_drugs=num_drugs,
+            drug_colors=drug_colors,
+            show_boundary=show_policy_boundary,
+        )
+
+        if show_legend:
+            legend_elements = [
+                Patch(facecolor=drug_colors[i], edgecolor="gray",
+                      linewidth=0.5, label=drug_labels[i])
+                for i in range(num_drugs)
+            ]
+            ax.legend(
+                handles=legend_elements,
+                loc="upper left",
+                fontsize=8,
+                framealpha=0.9,
+            )
+
+        ax.text(
+            0.99, 0.02,
+            f"Fitness shading\nlow={fmin:.3f}  high={fmax:.3f}",
+            transform=ax.transAxes,
+            ha="right", va="bottom",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                      alpha=0.85, edgecolor="lightgray"),
+        )
     else:
-        ax.scatter(scores[:, 0], scores[:, 1], s=6, alpha=0.2, color="tab:blue")
+        if density:
+            hb = ax.hexbin(
+                scores[:, 0], scores[:, 1],
+                gridsize=50,
+                cmap="viridis",
+                mincnt=1,
+                linewidths=0,
+                edgecolors="none",
+            )
+            fig.colorbar(hb, ax=ax, label="Sample density")
+        else:
+            ax.scatter(scores[:, 0], scores[:, 1], s=6, alpha=0.2, color="tab:blue")
 
     if show_sample_paths:
         unique_runs = np.unique(run_ids)
@@ -1111,13 +1469,15 @@ def plot_dominant_modes(
         for r in chosen:
             idx = np.where(run_ids == r)[0]
             idx = idx[np.argsort(time_ids[idx])]
-            ax.plot(scores[idx, 0], scores[idx, 1], alpha=0.15, lw=1)
+            ax.plot(scores[idx, 0], scores[idx, 1], alpha=0.08, lw=0.6, color="white", zorder=3)
 
     if mean_scores is not None:
-        ax.plot(mean_scores[:, 0], mean_scores[:, 1], color="red", lw=1.0, alpha = 0.5, label="Mean trajectory")
-        ax.scatter(mean_scores[0, 0], mean_scores[0, 1], color="white", s=40, marker="o", zorder=5)
-        ax.scatter(mean_scores[-1, 0], mean_scores[-1, 1], color="white", s=60, marker="X", zorder=5)
-        ax.legend()
+        ax.plot(mean_scores[:, 0], mean_scores[:, 1],
+                color="red", lw=2.0, alpha=0.9, label="Mean trajectory", zorder=4)
+        ax.scatter(mean_scores[0, 0], mean_scores[0, 1],
+                   color="white", edgecolors="black", s=50, marker="o", zorder=5)
+        ax.scatter(mean_scores[-1, 0], mean_scores[-1, 1],
+                   color="white", edgecolors="black", s=70, marker="X", zorder=5)
 
     ax.set_xlabel(f"PC1 ({100 * evr[0]:.1f}%)")
     ax.set_ylabel(f"PC2 ({100 * evr[1]:.1f}%)")
@@ -1129,16 +1489,23 @@ def plot_dominant_modes(
         x, y = _bary_to_cart(bary[:, 0], bary[:, 1], bary[:, 2])
 
         if density:
-            ax2.hexbin(x, y, gridsize=40, cmap="viridis", mincnt=1)
+            ax2.hexbin(
+                x, y,
+                gridsize=30,
+                cmap="viridis",
+                mincnt=3,
+                linewidths=0,
+                edgecolors="none",
+            )
         else:
-            ax2.scatter(x, y, s=6, alpha=0.2)
+            ax2.scatter(x, y, s=6, alpha=0.15)
 
         if mean_scores is not None:
             mean_bary = scores_to_barycentric(mean_scores[:, :3])
             mx, my = _bary_to_cart(mean_bary[:, 0], mean_bary[:, 1], mean_bary[:, 2])
-            ax2.plot(mx, my, color="red", lw=1.5, alpha = 0.5, label="Mean trajectory")
-            ax2.scatter(mx[0], my[0], color="white", s=40, marker="o", zorder=5)
-            ax2.scatter(mx[-1], my[-1], color="white", s=60, marker="X", zorder=5)
+            ax2.plot(mx, my, color="red", lw=2.0, alpha=0.9)
+            ax2.scatter(mx[0], my[0], color="white", edgecolors="black", s=50, marker="o", zorder=5)
+            ax2.scatter(mx[-1], my[-1], color="white", edgecolors="black", s=70, marker="X", zorder=5)
 
         outline_x = [0, 1, 0.5, 0]
         outline_y = [0, 0, _SQRT3_2, 0]
@@ -1152,6 +1519,8 @@ def plot_dominant_modes(
 
     fig.tight_layout()
     return fig, pca
+
+
 
 # ──────────────────────────────────────────────────────────────────────
 #  CLI entry point

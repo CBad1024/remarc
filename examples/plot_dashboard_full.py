@@ -224,7 +224,7 @@ def main():
         print(f"Loading cached SHEPHERD MDP (L={L})...")
         shepherd_mdp.load(cache_path)
     else:
-        print("Solving Exact SHEPHERD MDP (L=20)...")
+        print(f"Solving Exact SHEPHERD MDP (L={L})...")
         shepherd_mdp.solve()
         shepherd_mdp.save(cache_path)
         print(f"Saved cached SHEPHERD policy to {cache_path}")
@@ -321,41 +321,54 @@ def main():
     # 2. Dominant Modes/PCA Analysis
     print("Plotting Dominant Modes (PCA Analysis)...")
 
+    fitness_fn = lambda x, a: np.mean(np.dot(landscape_data[a], x))
+
     fig_rl, pca_info = plot_dominant_modes(
-    rl_states,
+    state_trajectories=rl_states,
+    policy_fn=lambda x: rl_policy_fn(x),
+    fitness_fn=fitness_fn,
     burn_in=100,
-    stride=5,
-    explained_threshold=0.88,
-    title="Dominant Modes (RL Policy)",
-    )
+    drug_colors = ["#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+                       "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c"][:num_drugs],
+    show_sample_paths=False,
+    simplex_view=True,
+    title="Dominant Modes (REMARC Policy)",
+)
     fig_rl.savefig(str(project_root / 'log' / f'{sig}_dominant_modes_remarc.png'), dpi=200, bbox_inches='tight')
     plt.close(fig_rl)
 
     print("REMARC PCA Info:", pca_info)
 
     fig_gr, pca_info = plot_dominant_modes(
-    gr_states,
+    state_trajectories=gr_states,
+    policy_fn=lambda x: gr_policy_fn(x),
+    fitness_fn=fitness_fn,
     burn_in=100,
-    stride=5,
-    explained_threshold=0.88,
+    drug_colors = ["#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+                       "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c"][:num_drugs],
+    show_sample_paths=False,
+    simplex_view=True,
     title="Dominant Modes (Greedy Policy)",
-    )
+)
     fig_gr.savefig(str(project_root / 'log' / f'{sig}_dominant_modes_greedy.png'), dpi=200, bbox_inches='tight')
-    plt.close(fig_rl)
+    plt.close(fig_gr)
 
     print("Greedy PCA Info:", pca_info)
 
     fig_sh, pca_info = plot_dominant_modes(
-    sh_states,
+    state_trajectories=sh_states,
+    policy_fn=lambda x: shepherd_fn(x),
+    fitness_fn=fitness_fn,
     burn_in=100,
-    stride=5,
-    explained_threshold=0.88,
-    title="Dominant Modes (SHEPHED Policy)",
-    )
+    drug_colors = ["#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+                       "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c"][:num_drugs],
+    show_sample_paths=False,
+    simplex_view=True,
+    title="Dominant Modes (SHEPHERD Policy)",
+)
     fig_sh.savefig(str(project_root / 'log' / f'{sig}_dominant_modes_shepherd.png'), dpi=200, bbox_inches='tight')
-    plt.close(fig_rl)
+    plt.close(fig_sh)
 
-    print("SHEPHERD PCA Info:", pca_info)
 
     if DATASET != "eight_state":
             # 2. Population distribution simplexes
