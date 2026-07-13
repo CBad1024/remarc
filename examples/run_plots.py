@@ -264,6 +264,17 @@ def main():
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=3
     )
 
+    # CREATE OUTPUT DIRECTORIES
+    base_dir = project_root / "log" / sig
+    traj_dir = base_dir / "trajectories"
+    ss_dir = base_dir / "steady_state"
+    policy_dir = base_dir / "policy_analysis"
+    disagree_dir = base_dir / "disagreement"
+    pca_dir = base_dir / "pca"
+
+    for d in [traj_dir, ss_dir, policy_dir, disagree_dir, pca_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
     # 1. Fitness Trajectories
     print("Plotting Fitness Trajectories...")
 
@@ -366,7 +377,7 @@ def main():
         plt.legend(fontsize=10, loc="center right", bbox_to_anchor=(1.25, 0.5))
         plt.tight_layout()
         plt.savefig(
-            str(project_root / "log" / f"{sig}_dashboard_trajectories{suffix}.png"),
+            str(traj_dir / f"fitness_trajectories{suffix}.png"),
             dpi=200,
             bbox_inches="tight",
         )
@@ -418,7 +429,7 @@ def main():
         title="Dominant Modes (REMARC Policy)",
     )
     fig_rl.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_remarc.png"),
+        str(pca_dir / "dominant_modes_remarc.png"),
         dpi=200,
         bbox_inches="tight",
     )
@@ -446,7 +457,7 @@ def main():
         title="Dominant Modes (Greedy Policy)",
     )
     fig_gr.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_greedy.png"),
+        str(pca_dir / "dominant_modes_greedy.png"),
         dpi=200,
         bbox_inches="tight",
     )
@@ -474,7 +485,7 @@ def main():
         title="Dominant Modes (SHEPHERD Policy)",
     )
     fig_sh.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_shepherd.png"),
+        str(pca_dir / "dominant_modes_shepherd.png"),
         dpi=200,
         bbox_inches="tight",
     )
@@ -492,7 +503,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_pop_density.png"),
+                str(policy_dir / "pop_density.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -509,7 +520,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_policy.png"),
+                str(policy_dir / "policy_RL.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -524,7 +535,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_greedy_policy.png"),
+                str(policy_dir / "policy_Greedy.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -539,7 +550,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_shepherd_policy.png"),
+                str(policy_dir / "policy_SHEPHERD.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -557,7 +568,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_fitness_landscape.png"),
+                str(policy_dir / "fitness_landscape.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -575,7 +586,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_disagreement.png"),
+                str(disagree_dir / "disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -594,9 +605,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root / "log" / f"{sig}_dashboard_magnitude_disagreement.png"
-                ),
+                str(disagree_dir / "magnitude_disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -614,9 +623,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root / "log" / f"{sig}_dashboard_shepherd_disagreement.png"
-                ),
+                str(disagree_dir / "shepherd_disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -635,11 +642,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root
-                    / "log"
-                    / f"{sig}_dashboard_shepherd_magnitude_disagreement.png"
-                ),
+                str(disagree_dir / "shepherd_magnitude_disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -661,7 +664,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_steady_state_RL.png"),
+                str(ss_dir / "steady_state_RL.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -677,9 +680,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root / "log" / f"{sig}_dashboard_steady_state_SHEPHERD.png"
-                ),
+                str(ss_dir / "steady_state_SHEPHERD.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -695,7 +696,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_steady_state_Greedy.png"),
+                str(ss_dir / "steady_state_Greedy.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -724,7 +725,7 @@ def main():
         plt.legend(fontsize=10, loc="center right", bbox_to_anchor=(1.15, 0.5))
         plt.tight_layout()
         plt.savefig(
-            str(project_root / "log" / f"{sig}_dashboard_freqs_{filename_suffix}.png"),
+            str(traj_dir / f"freqs_{filename_suffix}.png"),
             dpi=200,
             bbox_inches="tight",
         )
