@@ -55,17 +55,17 @@ cover/
 *.mo
 *.pot
 
-# Django stuff:
+# Django:
 *.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
-# Flask stuff:
+# Flask:
 instance/
 .webassets-cache
 
-# Scrapy stuff:
+# Scrapy:
 .scrapy
 
 # Sphinx documentation
@@ -149,3 +149,5 @@ dontsetup.txt
 model_info*.json
 pareto_frontier_results.csv
 notes.txt
+*.png
+*.onnx
