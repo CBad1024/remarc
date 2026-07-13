@@ -151,4 +151,4 @@ pareto_frontier_results.csv
 notes.txt
 *.png
 *.onnx
-
+.gemini/
