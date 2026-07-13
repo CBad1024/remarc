@@ -1497,6 +1497,12 @@ def pca_inverse_transform(scores, pca):
     return scores @ pca["components"] + pca["mean"]
 
 
+def pca_transform(X_clr, pca):
+    X_clr = np.asarray(X_clr, dtype=float)
+    return (X_clr - pca["mean"]) @ pca["components"].T
+
+
+
 def _mix_with_white(color, t):
     """
     t in [0,1]. t=0 -> white, t=1 -> original color
@@ -1611,7 +1617,7 @@ def plot_dominant_modes(
     explained_threshold=0.88,
     show_mean_trajectory=True,
     show_sample_paths=False,
-    max_paths=20,
+    max_paths=10,
     density=True,
     simplex_view=True,
     title="Dominant Tumor Modes",
@@ -1619,139 +1625,106 @@ def plot_dominant_modes(
     latent_pc3="mean",
     show_policy_boundary=True,
     show_legend=True,
+    transition_fn=None,
+    path_stride=20,
+    quiver_grid_n=20,
 ):
-    # defaults aligned with plot_simplex_policy_slices
     if drug_labels is None:
         drug_labels = [f"Drug {chr(65 + i)}" for i in range(num_drugs)]
     if drug_colors is None:
         drug_colors = [
-            "#2ecc71",
-            "#e67e22",
-            "#5b7cc9",
-            "#e84393",
-            "#f1c40f",
-            "#1abc9c",
-            "#9b59b6",
-            "#e74c3c",
+            "#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+            "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c",
         ][:num_drugs]
 
     X_raw, run_ids, time_ids = flatten_state_trajectories(
-        state_trajectories,
-        burn_in=burn_in,
-        stride=stride,
-        max_runs=max_runs,
-        max_steps=max_steps,
+        state_trajectories, burn_in=burn_in, stride=stride, max_runs=max_runs, max_steps=max_steps
     )
-
     X_clr = clr_transform(X_raw, eps=eps)
     pca = run_pca(X_clr, n_components=3)
+    
+    print(f"\n--- Principal Components for {title} ---")
+    for i in range(len(pca['components'])):
+        comp_clr = pca['components'][i]
+        comp_state = clr_inverse(np.array([comp_clr]))[0]
+        state_str = ", ".join([f"{x:.4f}" for x in comp_state])
+        print(f"PC{i+1}: [{state_str}]")
+    print("------------------------------------------\n")
+    
     scores = pca["scores"]
     evr = pca["explained_ratio"]
     cev = pca["cumulative_ratio"]
 
-    mean_traj = mean_trajectory(
-        state_trajectories,
-        burn_in=burn_in,
-        stride=stride,
-        max_steps=max_steps,
-    )
-
+    mean_traj = mean_trajectory(state_trajectories, burn_in=burn_in, stride=stride, max_steps=max_steps)
     mean_scores = None
     if show_mean_trajectory:
-        mean_scores = (clr_transform(mean_traj, eps=eps) - pca["mean"]) @ pca[
-            "components"
-        ].T
+        mean_scores = (clr_transform(mean_traj, eps=eps) - pca["mean"]) @ pca["components"].T
 
-    fig, axes = plt.subplots(1, 1, figsize=(6, 5))
-    if simplex_view and cev[2] >= explained_threshold:
-        axes = [axes, "dummy"]
-    else:
-        axes = [axes]
-
-    ax = axes[0]
-
+    fig_pca_clean, ax_pca_clean = plt.subplots(1, 1, figsize=(6, 5))
+    fig_pca_paths, ax_pca_paths = plt.subplots(1, 1, figsize=(6, 5))
+    
     use_policy_map = (policy_fn is not None) and (fitness_fn is not None)
 
-    if use_policy_map:
-        xpad = 0.05 * max(scores[:, 0].ptp(), 1e-6)
-        ypad = 0.05 * max(scores[:, 1].ptp(), 1e-6)
-        xlim = (scores[:, 0].min() - xpad, scores[:, 0].max() + xpad)
-        ylim = (scores[:, 1].min() - ypad, scores[:, 1].max() + ypad)
+    for ax in [ax_pca_clean, ax_pca_paths]:
+        if use_policy_map:
+            xpad = 0.05 * max(scores[:, 0].ptp(), 1e-6)
+            ypad = 0.05 * max(scores[:, 1].ptp(), 1e-6)
+            xlim = (scores[:, 0].min() - xpad, scores[:, 0].max() + xpad)
+            ylim = (scores[:, 1].min() - ypad, scores[:, 1].max() + ypad)
 
-        if latent_pc3 == "mean":
-            pc3_value = float(np.mean(scores[:, 2]))
-        elif latent_pc3 == "median":
-            pc3_value = float(np.median(scores[:, 2]))
-        else:
-            pc3_value = float(latent_pc3)
+            if latent_pc3 == "mean":
+                pc3_value = float(np.mean(scores[:, 2]))
+            else:
+                pc3_value = float(np.median(scores[:, 2])) if latent_pc3 == "median" else float(latent_pc3)
 
-        XX, YY, action_grid, fitness_grid = _latent_policy_grid(
-            pca=pca,
-            xlim=xlim,
-            ylim=ylim,
-            policy_fn=policy_fn,
-            fitness_fn=fitness_fn,
-            grid_n=latent_grid_n,
-            pc3_value=pc3_value,
-        )
-
-        fmin, fmax = _draw_latent_policy_map(
-            ax,
-            XX,
-            YY,
-            action_grid,
-            fitness_grid,
-            num_drugs=num_drugs,
-            drug_colors=drug_colors,
-            show_boundary=show_policy_boundary,
-        )
-
-        if show_legend:
-            legend_elements = [
-                Patch(
-                    facecolor=drug_colors[i],
-                    edgecolor="gray",
-                    linewidth=0.5,
-                    label=drug_labels[i],
-                )
-                for i in range(num_drugs)
-            ]
-            ax.legend(
-                handles=legend_elements,
-                loc="upper left",
-                fontsize=8,
-                framealpha=0.9,
+            XX, YY, action_grid, fitness_grid = _latent_policy_grid(
+                pca=pca, xlim=xlim, ylim=ylim, policy_fn=policy_fn, fitness_fn=fitness_fn, grid_n=latent_grid_n, pc3_value=pc3_value
             )
 
-        ax.text(
-            0.99,
-            0.02,
-            f"Fitness shading\nlow={fmin:.3f}  high={fmax:.3f}",
-            transform=ax.transAxes,
-            ha="right",
-            va="bottom",
-            fontsize=8,
-            bbox=dict(
-                boxstyle="round,pad=0.25",
-                facecolor="white",
-                alpha=0.85,
-                edgecolor="lightgray",
-            ),
-        )
-    else:
-        if density:
-            hb = ax.hexbin(
-                scores[:, 0],
-                scores[:, 1],
-                gridsize=50,
-                cmap="viridis",
-                mincnt=1,
-                linewidths=0,
-                edgecolors="none",
+            fmin, fmax = _draw_latent_policy_map(
+                ax, XX, YY, action_grid, fitness_grid, num_drugs=num_drugs, drug_colors=drug_colors, show_boundary=show_policy_boundary
             )
-            fig.colorbar(hb, ax=ax, label="Sample density")
+
+            if transition_fn is not None:
+                qx = np.linspace(xlim[0], xlim[1], quiver_grid_n)
+                qy = np.linspace(ylim[0], ylim[1], quiver_grid_n)
+                QX, QY = np.meshgrid(qx, qy)
+                q_scores = np.column_stack([QX.ravel(), QY.ravel(), np.full(QX.size, pc3_value, dtype=float)])
+                q_clr = pca_inverse_transform(q_scores, pca)
+                q_comp = clr_inverse(q_clr)
+                q_act = np.array([policy_fn(s) for s in q_comp])
+                q_next_comp = [transition_fn(s, a) for s, a in zip(q_comp, q_act)]
+                q_next_clr = clr_transform(np.array(q_next_comp))
+                q_next_scores = pca_transform(q_next_clr, pca)
+                q_dx = q_next_scores[:, 0] - q_scores[:, 0]
+                q_dy = q_next_scores[:, 1] - q_scores[:, 1]
+                q_mag = np.hypot(q_dx, q_dy)
+                q_mag_max = np.max(q_mag) + 1e-8
+                q_dx_norm = q_dx / (q_mag + 1e-8)
+                q_dy_norm = q_dy / (q_mag + 1e-8)
+                q_alphas = np.clip(0.1 + 0.8 * (q_mag / q_mag_max), 0.1, 0.9)
+                q_colors = np.zeros((len(q_dx), 4))
+                q_colors[:, 3] = q_alphas
+                scale_val = (xlim[1] - xlim[0]) / (quiver_grid_n * 0.8)
+                ax.quiver(QX.ravel(), QY.ravel(), q_dx_norm, q_dy_norm, color=q_colors, angles='xy', scale_units='xy', scale=2.5/scale_val, width=0.003, zorder=2)
+
+            if show_legend and ax == ax_pca_clean:
+                legend_elements = [Patch(facecolor=drug_colors[i], edgecolor="gray", linewidth=0.5, label=drug_labels[i]) for i in range(num_drugs)]
+                ax.legend(handles=legend_elements, loc="upper left", fontsize=8, framealpha=0.9)
         else:
-            ax.scatter(scores[:, 0], scores[:, 1], s=6, alpha=0.2, color="tab:blue")
+            if density:
+                hb = ax.hexbin(scores[:, 0], scores[:, 1], gridsize=50, cmap="viridis", mincnt=1, linewidths=0, edgecolors="none")
+                if ax == ax_pca_clean:
+                    fig_pca_clean.colorbar(hb, ax=ax, label="Sample density")
+            else:
+                ax.scatter(scores[:, 0], scores[:, 1], s=6, alpha=0.2, color="tab:blue")
+
+        ax.set_xlabel(f"PC1 ({100 * evr[0]:.1f}%)")
+        ax.set_ylabel(f"PC2 ({100 * evr[1]:.1f}%)")
+        ax.set_title(f"{title}\nPC1+PC2+PC3 = {100 * cev[2]:.1f}% variance")
+
+    from matplotlib.collections import LineCollection
+    from scipy.ndimage import gaussian_filter1d
 
     if show_sample_paths:
         unique_runs = np.unique(run_ids)
@@ -1759,184 +1732,171 @@ def plot_dominant_modes(
         for r in chosen:
             idx = np.where(run_ids == r)[0]
             idx = idx[np.argsort(time_ids[idx])]
-            ax.plot(
-                scores[idx, 0],
-                scores[idx, 1],
-                alpha=0.08,
-                lw=0.6,
-                color="white",
-                zorder=3,
-            )
+            idx = idx[::path_stride]
+            
+            px = gaussian_filter1d(scores[idx, 0], sigma=2)
+            py = gaussian_filter1d(scores[idx, 1], sigma=2)
+            points = np.array([px, py]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            
+            norm = plt.Normalize(0, len(px))
+            lc = LineCollection(segments, cmap='viridis', norm=norm, alpha=0.9, linewidths=2.5, zorder=3)
+            lc.set_array(np.arange(len(px)))
+            ax_pca_paths.add_collection(lc)
 
     if mean_scores is not None:
-        ax.plot(
-            mean_scores[:, 0],
-            mean_scores[:, 1],
-            color="red",
-            lw=2.0,
-            alpha=0.9,
-            label="Mean trajectory",
-            zorder=4,
-        )
-        ax.scatter(
-            mean_scores[0, 0],
-            mean_scores[0, 1],
-            color="white",
-            edgecolors="black",
-            s=50,
-            marker="o",
-            zorder=5,
-        )
-        ax.scatter(
-            mean_scores[-1, 0],
-            mean_scores[-1, 1],
-            color="white",
-            edgecolors="black",
-            s=70,
-            marker="X",
-            zorder=5,
-        )
+        mx = gaussian_filter1d(mean_scores[:, 0], sigma=2)
+        my = gaussian_filter1d(mean_scores[:, 1], sigma=2)
+        ax_pca_paths.plot(mx, my, color="red", lw=2.5, alpha=1.0, label="Mean trajectory", zorder=4)
+        ax_pca_paths.scatter(mx[0], my[0], color="white", edgecolors="black", s=50, marker="o", zorder=5)
+        ax_pca_paths.scatter(mx[-1], my[-1], color="white", edgecolors="black", s=70, marker="X", zorder=5)
 
-    ax.set_xlabel(f"PC1 ({100 * evr[0]:.1f}%)")
-    ax.set_ylabel(f"PC2 ({100 * evr[1]:.1f}%)")
-    ax.set_title(f"{title}\nPC1+PC2+PC3 = {100 * cev[2]:.1f}% variance")
+    fig_pca_clean.tight_layout()
+    fig_pca_paths.tight_layout()
 
-    # Add +/- 1 std boundary for hero's path in PCA
-    if mean_scores is not None and len(state_trajectories) > 1:
-        std_scores_val = []
-        for step in range(len(mean_scores)):
-            step_states = []
-            for traj in state_trajectories:
-                # pad or skip
-                if step < len(traj):
-                    step_states.append(traj[step])
-            if step_states:
-                st_clr = clr_transform(step_states, eps=eps)
-                sc = (st_clr - pca["mean"]) @ pca["components"].T
-                std_scores_val.append(sc.std(axis=0))
-            else:
-                std_scores_val.append(np.zeros(3))
-        std_scores_val = np.array(std_scores_val)
-        
-        # Plot filled region
-        ax.fill_between(
-            mean_scores[:, 0],
-            mean_scores[:, 1] - std_scores_val[:, 1],
-            mean_scores[:, 1] + std_scores_val[:, 1],
-            color="red",
-            alpha=0.2,
-            zorder=3
-        )
-        # We can't fill_between for x easily, but we can plot upper/lower lines
-        ax.plot(mean_scores[:, 0] - std_scores_val[:, 0], mean_scores[:, 1], color="red", lw=0.5, alpha=0.5, ls="--")
-        ax.plot(mean_scores[:, 0] + std_scores_val[:, 0], mean_scores[:, 1], color="red", lw=0.5, alpha=0.5, ls="--")
-
-    fig_simplex = None
-    if len(axes) > 1:
-        ax2 = axes[1]
-        # Instead of ax2 in same figure, let's just create a new figure!
-        # Actually, let's just keep the code and return both, but it's easier to create a new figure
-        fig_simplex, ax2 = plt.subplots(1, 1, figsize=(6, 5))
+    fig_simplex_clean = None
+    fig_simplex_paths = None
+    if simplex_view and cev[2] >= explained_threshold:
+        fig_simplex_clean, ax_sim_clean = plt.subplots(1, 1, figsize=(6, 5))
+        fig_simplex_paths, ax_sim_paths = plt.subplots(1, 1, figsize=(6, 5))
         
         bary = scores_to_barycentric(scores[:, :3])
         x, y = _bary_to_cart(bary[:, 0], bary[:, 1], bary[:, 2])
 
-        if density:
-            ax2.hexbin(
-                x,
-                y,
-                gridsize=30,
-                cmap="viridis",
-                mincnt=3,
-                linewidths=0,
-                edgecolors="none",
-            )
-        else:
-            ax2.scatter(x, y, s=6, alpha=0.15)
+        for ax2 in [ax_sim_clean, ax_sim_paths]:
+            if use_policy_map:
+                # Generate policy map on simplex
+                bary_full, x_cart_full, y_cart_full, tri_idx_full = _make_simplex_grid(resolution=latent_grid_n)
+                
+                scores_mean = scores[:, :3].mean(axis=0)
+                scores_std = scores[:, :3].std(axis=0) + 1e-12
+                
+                # Z_scaled = log(W)
+                Z_raw = np.log(np.clip(bary_full, 1e-8, 1.0))
+                Z_scaled = Z_raw - np.mean(Z_raw, axis=1, keepdims=True)
+                Z_3 = Z_scaled * scores_std + scores_mean
+                
+                Z_full = np.zeros((len(bary_full), pca["components"].shape[0]))
+                Z_full[:, :3] = Z_3
+                
+                clr_grid = pca_inverse_transform(Z_full, pca)
+                comp_grid = clr_inverse(clr_grid)
+                
+                actions_sim = np.array([policy_fn(state) for state in comp_grid], dtype=int)
+                fitness_sim = np.array([fitness_fn(state, a) for state, a in zip(comp_grid, actions_sim)], dtype=float)
+                
+                valid = np.isfinite(fitness_sim)
+                fmin = np.nanmin(fitness_sim[valid]) if np.any(valid) else 0
+                fmax = np.nanmax(fitness_sim[valid]) if np.any(valid) else 1
+                denom = max(fmax - fmin, 1e-12)
+                
+                # Assign color based on the triangle center
+                bary_centers = (bary_full[tri_idx_full[:, 0]] + bary_full[tri_idx_full[:, 1]] + bary_full[tri_idx_full[:, 2]]) / 3.0
+                Z_raw_c = np.log(np.clip(bary_centers, 1e-8, 1.0))
+                Z_scaled_c = Z_raw_c - np.mean(Z_raw_c, axis=1, keepdims=True)
+                Z_3_c = Z_scaled_c * scores_std + scores_mean
+                Z_full_c = np.zeros((len(bary_centers), pca["components"].shape[0]))
+                Z_full_c[:, :3] = Z_3_c
+                clr_c = pca_inverse_transform(Z_full_c, pca)
+                comp_c = clr_inverse(clr_c)
+                act_c = np.array([policy_fn(state) for state in comp_c], dtype=int)
+                fit_c = np.array([fitness_fn(state, a) for state, a in zip(comp_c, act_c)], dtype=float)
+                
+                tri_colors_rgba = []
+                for a, f in zip(act_c, fit_c):
+                    if a < 0 or a >= num_drugs:
+                        tri_colors_rgba.append((0,0,0,0))
+                    else:
+                        normf = (f - fmin) / denom
+                        face = _mix_with_white(drug_colors[a], 0.20 + 0.80 * normf)
+                        tri_colors_rgba.append(face)
+                
+                from matplotlib.collections import PolyCollection
+                verts = np.column_stack([x_cart_full, y_cart_full])
+                tri_verts = verts[tri_idx_full]
+                pc = PolyCollection(tri_verts, facecolors=tri_colors_rgba, edgecolors="none", linewidths=0, zorder=1)
+                ax2.add_collection(pc)
+                
+                if transition_fn is not None:
+                    q_bary, q_x_cart, q_y_cart, _ = _make_simplex_grid(resolution=quiver_grid_n)
+                    q_Z_raw = np.log(np.clip(q_bary, 1e-8, 1.0))
+                    q_Z_scaled = q_Z_raw - np.mean(q_Z_raw, axis=1, keepdims=True)
+                    q_Z_3 = q_Z_scaled * scores_std + scores_mean
+                    q_Z_full = np.zeros((len(q_bary), pca["components"].shape[0]))
+                    q_Z_full[:, :3] = q_Z_3
+                    q_clr = pca_inverse_transform(q_Z_full, pca)
+                    q_comp = clr_inverse(q_clr)
+                    q_act = np.array([policy_fn(s) for s in q_comp])
+                    q_next_comp = [transition_fn(s, a) for s, a in zip(q_comp, q_act)]
+                    q_next_clr = clr_transform(np.array(q_next_comp))
+                    q_next_scores = pca_transform(q_next_clr, pca)
+                    q_next_scores_3 = q_next_scores[:, :3]
+                    q_next_Z_scaled = (q_next_scores_3 - scores_mean) / scores_std
+                    q_next_bary = np.exp(q_next_Z_scaled)
+                    q_next_bary /= q_next_bary.sum(axis=1, keepdims=True)
+                    q_next_x_cart, q_next_y_cart = _bary_to_cart(q_next_bary[:, 0], q_next_bary[:, 1], q_next_bary[:, 2])
+                    q_dx = q_next_x_cart - q_x_cart
+                    q_dy = q_next_y_cart - q_y_cart
+                    q_mag = np.hypot(q_dx, q_dy)
+                    q_mag_max = np.max(q_mag) + 1e-8
+                    q_dx_norm = q_dx / (q_mag + 1e-8)
+                    q_dy_norm = q_dy / (q_mag + 1e-8)
+                    q_alphas = np.clip(0.1 + 0.8 * (q_mag / q_mag_max), 0.1, 0.9)
+                    q_colors = np.zeros((len(q_dx), 4))
+                    q_colors[:, 3] = q_alphas
+                    ax2.quiver(q_x_cart, q_y_cart, q_dx_norm, q_dy_norm, color=q_colors, angles='xy', scale_units='xy', scale=60.0, width=0.003, zorder=2)
 
+            else:
+                if density:
+                    ax2.hexbin(x, y, gridsize=30, cmap="viridis", mincnt=3, linewidths=0, edgecolors="none", zorder=1)
+                else:
+                    ax2.scatter(x, y, s=6, alpha=0.15, zorder=1)
+
+            outline_x = [0, 1, 0.5, 0]
+            outline_y = [0, 0, _SQRT3_2, 0]
+            ax2.plot(outline_x, outline_y, color="black", lw=1.2, zorder=2)
+            ax2.text(-0.03, -0.04, "PC1-mode", fontsize=8)
+            ax2.text(1.03, -0.04, "PC2-mode", fontsize=8, ha="right")
+            ax2.text(0.5, _SQRT3_2 + 0.04, "PC3-mode", fontsize=8, ha="center")
+            ax2.set_aspect("equal")
+            ax2.axis("off")
+            ax2.set_title(f"{title} (Simplex)")
+
+        # Paths on ax_sim_paths only
         if mean_scores is not None:
             mean_bary = scores_to_barycentric(mean_scores[:, :3])
             mx, my = _bary_to_cart(mean_bary[:, 0], mean_bary[:, 1], mean_bary[:, 2])
             
-            if len(state_trajectories) > 1:
-                # Approximate std boundary in simplex by projecting mean +/- std
-                std_upper = mean_scores[:, :3].copy()
-                std_lower = mean_scores[:, :3].copy()
-                # we have std_scores_val computed earlier
-                std_upper[:, 1] += std_scores_val[:, 1]
-                std_lower[:, 1] -= std_scores_val[:, 1]
-                
-                bary_up = scores_to_barycentric(std_upper)
-                bary_dn = scores_to_barycentric(std_lower)
-                
-                ux, uy = _bary_to_cart(bary_up[:, 0], bary_up[:, 1], bary_up[:, 2])
-                dx, dy = _bary_to_cart(bary_dn[:, 0], bary_dn[:, 1], bary_dn[:, 2])
-                
-                ax2.fill_between(mx, dy, uy, color="red", alpha=0.2, zorder=3)
-                
-                # For x-direction std:
-                std_right = mean_scores[:, :3].copy()
-                std_left = mean_scores[:, :3].copy()
-                std_right[:, 0] += std_scores_val[:, 0]
-                std_left[:, 0] -= std_scores_val[:, 0]
-                
-                bary_r = scores_to_barycentric(std_right)
-                bary_l = scores_to_barycentric(std_left)
-                rx, ry = _bary_to_cart(bary_r[:, 0], bary_r[:, 1], bary_r[:, 2])
-                lx, ly = _bary_to_cart(bary_l[:, 0], bary_l[:, 1], bary_l[:, 2])
-                
-                ax2.plot(lx, ly, color="red", lw=0.5, alpha=0.5, ls="--")
-                ax2.plot(rx, ry, color="red", lw=0.5, alpha=0.5, ls="--")
+            if show_sample_paths:
+                for r in chosen:
+                    idx = np.where(run_ids == r)[0]
+                    idx = idx[np.argsort(time_ids[idx])]
+                    idx = idx[::path_stride]
+                    bx, by = _bary_to_cart(bary[idx, 0], bary[idx, 1], bary[idx, 2])
+                    
+                    px = gaussian_filter1d(bx, sigma=2)
+                    py = gaussian_filter1d(by, sigma=2)
+                    points = np.array([px, py]).T.reshape(-1, 1, 2)
+                    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+                    
+                    norm = plt.Normalize(0, len(px))
+                    lc = LineCollection(segments, cmap='viridis', norm=norm, alpha=0.9, linewidths=2.5, zorder=3)
+                    lc.set_array(np.arange(len(px)))
+                    ax_sim_paths.add_collection(lc)
 
-            ax2.plot(mx, my, color="red", lw=2.0, alpha=0.9, zorder=4)
-            ax2.scatter(
-                mx[0],
-                my[0],
-                color="white",
-                edgecolors="black",
-                s=50,
-                marker="o",
-                zorder=5,
-            )
-            ax2.scatter(
-                mx[-1],
-                my[-1],
-                color="white",
-                edgecolors="black",
-                s=70,
-                marker="X",
-                zorder=5,
-            )
+            # Smooth the mean trajectory too
+            mx_smooth = gaussian_filter1d(mx, sigma=2)
+            my_smooth = gaussian_filter1d(my, sigma=2)
+            ax_sim_paths.plot(mx_smooth, my_smooth, color="red", lw=2.5, alpha=1.0, zorder=4)
+            ax_sim_paths.scatter(mx_smooth[0], my_smooth[0], color="white", edgecolors="black", s=50, marker="o", zorder=5)
+            ax_sim_paths.scatter(mx_smooth[-1], my_smooth[-1], color="white", edgecolors="black", s=70, marker="X", zorder=5)
 
-        outline_x = [0, 1, 0.5, 0]
-        outline_y = [0, 0, _SQRT3_2, 0]
-        ax2.plot(outline_x, outline_y, color="black", lw=1.2)
-        ax2.text(-0.03, -0.04, "PC1-mode", fontsize=8)
-        ax2.text(1.03, -0.04, "PC2-mode", fontsize=8, ha="right")
-        ax2.text(0.5, _SQRT3_2 + 0.04, "PC3-mode", fontsize=8, ha="center")
-        ax2.set_aspect("equal")
-        ax2.axis("off")
-        ax2.set_title("Latent mode simplex")
+        fig_simplex_clean.tight_layout()
+        fig_simplex_paths.tight_layout()
 
-    fig.tight_layout()
-    if len(axes) > 1:
-        # We need to remove ax2 from fig if we created a new one, but actually let's just close the big fig and return two new ones? 
-        # No, just return fig, fig_simplex, pca
-        pass
-    
-    # Actually, earlier we did:
-    # fig_simplex, ax2 = plt.subplots...
-    # so we should return (fig, fig_simplex, pca) if simplex_view else (fig, pca)
-    if simplex_view and cev[2] >= explained_threshold:
-        return fig, fig_simplex, pca
-    else:
-        return fig, None, pca
-
+    return fig_pca_clean, fig_pca_paths, fig_simplex_clean, fig_simplex_paths, pca
 
 # ──────────────────────────────────────────────────────────────────────
-#  CLI entry point
-# ──────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import argparse
 
@@ -1976,6 +1936,8 @@ def plot_pop_x_metric_slices(
     x3_slices=None,
     figsize=None,
     is_three_state=False,
+    cmap_name="magma",
+    mincnt=0,
 ):
     if x3_slices is None and not is_three_state:
         x3_slices = [
@@ -2064,7 +2026,7 @@ def plot_pop_x_metric_slices(
     if global_max <= vmin:
         global_max = vmin * 10.0
 
-    cmap = mpl.colormaps["magma"]
+    cmap = mpl.colormaps[cmap_name]
     norm = mcolors.LogNorm(vmin=vmin, vmax=global_max)
 
     for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
@@ -2072,7 +2034,8 @@ def plot_pop_x_metric_slices(
         vals = slice_vals[s_idx] / total_states
         
         colors = cmap(norm(vals))
-        colors[vals == 0, 3] = 0.0
+        if mincnt > 0:
+            colors[vals == 0, 3] = 0.0
 
         verts = np.column_stack([x_cart, y_cart])
         tri_verts = verts[tri_idx]

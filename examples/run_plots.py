@@ -50,11 +50,13 @@ def run_eval(
 ):  # DRUG INDEX NOT USED UNLESS SINGLE DRUG POLICY
     all_fit = []
     all_states = []
+    all_actions = []
 
     for _ in range(num_runs):
         obs, _ = env.reset()
         fitnesses = []
         states = []
+        actions = []
 
         if agent_type == "Greedy":
             agent = GreedyAgent(env.drug_landscapes)
@@ -87,6 +89,7 @@ def run_eval(
                     res = agent(batch)
                 action = res.act[0]
 
+            actions.append(int(action))
             obs, _, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             step += 1
@@ -94,11 +97,13 @@ def run_eval(
         while len(fitnesses) < episode_steps:
             fitnesses.append(fitnesses[-1])
             states.append(states[-1])
+            actions.append(actions[-1] if len(actions) > 0 else -1)
 
         all_fit.append(fitnesses)
         all_states.append(states)
+        all_actions.append(actions)
 
-    return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_states
+    return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_states, all_actions
 
 
 def main():
@@ -122,7 +127,7 @@ def main():
     ent = 0.1
     batch = 64
     DATASET = "four_state"  # Accepts "three_state", "four_state", or "eight_state"
-    L = 3
+    L = 15
     TRAIN = False  # Set to True to train the model, False to load existing model
 
     sig = f"{DATASET}_dh_{delta_horizon}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
@@ -245,22 +250,22 @@ def main():
         return shepherd_mdp.get_action(state)
 
     print("Evaluating models...")
-    rl_m, rl_std, rl_states = run_eval(eval_env, policy, "RL", EVAL_RUNS, EVAL_STEPS)
-    gr_m, gr_std, gr_states = run_eval(eval_env, None, "Greedy", EVAL_RUNS, EVAL_STEPS)
-    rn_m, rn_std, rn_states = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
-    sh_m, sh_std, sh_states = run_eval(
+    rl_m, rl_std, rl_states, rl_actions = run_eval(eval_env, policy, "RL", EVAL_RUNS, EVAL_STEPS)
+    gr_m, gr_std, gr_states, gr_actions = run_eval(eval_env, None, "Greedy", EVAL_RUNS, EVAL_STEPS)
+    rn_m, rn_std, rn_states, rn_actions = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
+    sh_m, sh_std, sh_states, sh_actions = run_eval(
         eval_env, shepherd_fn, "Shepherd", EVAL_RUNS, EVAL_STEPS
     )
-    sd1_m, sd1_std, sd1_states = run_eval(
+    sd1_m, sd1_std, sd1_states, sd1_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=0
     )
-    sd2_m, sd2_std, sd2_states = run_eval(
+    sd2_m, sd2_std, sd2_states, sd2_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=1
     )
-    sd3_m, sd3_std, sd3_states = run_eval(
+    sd3_m, sd3_std, sd3_states, sd3_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=2
     )
-    sd4_m, sd4_std, sd4_states = run_eval(
+    sd4_m, sd4_std, sd4_states, sd4_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=3
     )
 
@@ -397,109 +402,95 @@ def main():
 
     def fitness_fn(x, a):
         return np.mean(np.dot(landscape_data[a], x))
+        
+    def transition_fn(state, action):
+        old_freqs = eval_env.freqs.copy()
+        eval_env.freqs = state.copy()
+        fitness_vec = eval_env.drug_landscapes[action]
+        for _ in range(eval_env.switch_interval):
+            eval_env.time_step(fitness_vec)
+        next_state = eval_env.freqs.copy()
+        eval_env.freqs = old_freqs
+        return next_state
 
-    fig_rl_pca, fig_rl_simplex, pca_info = plot_dominant_modes(
+    ret_rl = plot_dominant_modes(
         state_trajectories=rl_states,
         policy_fn=lambda x: rl_policy_fn(x),
         fitness_fn=fitness_fn,
         burn_in=100,
         drug_colors=[
-            "#2ecc71",
-            "#e67e22",
-            "#5b7cc9",
-            "#e84393",
-            "#f1c40f",
-            "#1abc9c",
-            "#9b59b6",
-            "#e74c3c",
+            "#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+            "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c",
         ][:num_drugs],
-        show_sample_paths=False,
+        show_sample_paths=True,
         simplex_view=True,
         title="Dominant Modes (REMARC Policy)",
+        transition_fn=transition_fn,
+        path_stride=50,
     )
-    fig_rl_pca.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_remarc_pca.png"),
-        dpi=200,
-        bbox_inches="tight",
-    )
-    plt.close(fig_rl_pca)
-    if fig_rl_simplex is not None:
-        fig_rl_simplex.savefig(
-            str(project_root / "log" / f"{sig}_dominant_modes_remarc_simplex.png"),
-            dpi=200,
-            bbox_inches="tight",
-        )
-        plt.close(fig_rl_simplex)
+    if len(ret_rl) == 5:
+        fig_rl_pca_c, fig_rl_pca_p, fig_rl_sim_c, fig_rl_sim_p, pca_info = ret_rl
+        fig_rl_pca_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_pca_clean.png"), dpi=200, bbox_inches="tight")
+        fig_rl_pca_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_pca_paths.png"), dpi=200, bbox_inches="tight")
+        plt.close(fig_rl_pca_c); plt.close(fig_rl_pca_p)
+        if fig_rl_sim_c is not None:
+            fig_rl_sim_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_simplex_clean.png"), dpi=200, bbox_inches="tight")
+            fig_rl_sim_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_simplex_paths.png"), dpi=200, bbox_inches="tight")
+            plt.close(fig_rl_sim_c); plt.close(fig_rl_sim_p)
 
     print("REMARC PCA Info:", pca_info)
 
-    fig_gr_pca, fig_gr_simplex, pca_info = plot_dominant_modes(
+    ret_gr = plot_dominant_modes(
         state_trajectories=gr_states,
         policy_fn=lambda x: gr_policy_fn(x),
         fitness_fn=fitness_fn,
         burn_in=100,
         drug_colors=[
-            "#2ecc71",
-            "#e67e22",
-            "#5b7cc9",
-            "#e84393",
-            "#f1c40f",
-            "#1abc9c",
-            "#9b59b6",
-            "#e74c3c",
+            "#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+            "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c",
         ][:num_drugs],
-        show_sample_paths=False,
+        show_sample_paths=True,
         simplex_view=True,
         title="Dominant Modes (Greedy Policy)",
+        transition_fn=transition_fn,
+        path_stride=50,
     )
-    fig_gr_pca.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_greedy_pca.png"),
-        dpi=200,
-        bbox_inches="tight",
-    )
-    plt.close(fig_gr_pca)
-    if fig_gr_simplex is not None:
-        fig_gr_simplex.savefig(
-            str(project_root / "log" / f"{sig}_dominant_modes_greedy_simplex.png"),
-            dpi=200,
-            bbox_inches="tight",
-        )
-        plt.close(fig_gr_simplex)
+    if len(ret_gr) == 5:
+        fig_gr_pca_c, fig_gr_pca_p, fig_gr_sim_c, fig_gr_sim_p, pca_info = ret_gr
+        fig_gr_pca_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_pca_clean.png"), dpi=200, bbox_inches="tight")
+        fig_gr_pca_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_pca_paths.png"), dpi=200, bbox_inches="tight")
+        plt.close(fig_gr_pca_c); plt.close(fig_gr_pca_p)
+        if fig_gr_sim_c is not None:
+            fig_gr_sim_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_simplex_clean.png"), dpi=200, bbox_inches="tight")
+            fig_gr_sim_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_simplex_paths.png"), dpi=200, bbox_inches="tight")
+            plt.close(fig_gr_sim_c); plt.close(fig_gr_sim_p)
 
     print("Greedy PCA Info:", pca_info)
 
-    fig_sh_pca, fig_sh_simplex, pca_info = plot_dominant_modes(
+    ret_sh = plot_dominant_modes(
         state_trajectories=sh_states,
         policy_fn=lambda x: shepherd_fn(x),
         fitness_fn=fitness_fn,
         burn_in=100,
         drug_colors=[
-            "#2ecc71",
-            "#e67e22",
-            "#5b7cc9",
-            "#e84393",
-            "#f1c40f",
-            "#1abc9c",
-            "#9b59b6",
-            "#e74c3c",
+            "#2ecc71", "#e67e22", "#5b7cc9", "#e84393",
+            "#f1c40f", "#1abc9c", "#9b59b6", "#e74c3c",
         ][:num_drugs],
-        show_sample_paths=False,
+        show_sample_paths=True,
         simplex_view=True,
         title="Dominant Modes (SHEPHERD Policy)",
+        transition_fn=transition_fn,
+        path_stride=50,
     )
-    fig_sh_pca.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_shepherd_pca.png"),
-        dpi=200,
-        bbox_inches="tight",
-    )
-    plt.close(fig_sh_pca)
-    if fig_sh_simplex is not None:
-        fig_sh_simplex.savefig(
-            str(project_root / "log" / f"{sig}_dominant_modes_shepherd_simplex.png"),
-            dpi=200,
-            bbox_inches="tight",
-        )
-        plt.close(fig_sh_simplex)
+    if len(ret_sh) == 5:
+        fig_sh_pca_c, fig_sh_pca_p, fig_sh_sim_c, fig_sh_sim_p, pca_info = ret_sh
+        fig_sh_pca_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_pca_clean.png"), dpi=200, bbox_inches="tight")
+        fig_sh_pca_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_pca_paths.png"), dpi=200, bbox_inches="tight")
+        plt.close(fig_sh_pca_c); plt.close(fig_sh_pca_p)
+        if fig_sh_sim_c is not None:
+            fig_sh_sim_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_simplex_clean.png"), dpi=200, bbox_inches="tight")
+            fig_sh_sim_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_simplex_paths.png"), dpi=200, bbox_inches="tight")
+            plt.close(fig_sh_sim_c); plt.close(fig_sh_sim_p)
 
     if DATASET != "eight_state":
         # 2. Population distribution simplexes
@@ -673,36 +664,44 @@ def main():
         def fitness_metric(x):
             return fitness_fn(x, rl_policy_fn(x))
             
-        fig_pop_fit = plot_pop_x_metric_slices(
+        fig = plot_pop_x_metric_slices(
             state_trajectories=rl_states,
             metric_fn=fitness_metric,
             metric_name="Pop x Fitness",
             num_drugs=num_drugs,
+            resolution=60,
+            x3_slices=None,
             is_three_state=is_three_state,
+            cmap_name="viridis",
+            mincnt=0,
         )
-        fig_pop_fit.savefig(
+        fig.savefig(
             str(project_root / "log" / f"{sig}_dashboard_pop_x_fitness.png"),
             dpi=200,
             bbox_inches="tight",
         )
-        plt.close(fig_pop_fit)
+        plt.close(fig)
 
         def disagreement_metric(x):
             return 1.0 if rl_policy_fn(x) != gr_policy_fn(x) else 0.0
 
-        fig_pop_dis = plot_pop_x_metric_slices(
+        fig = plot_pop_x_metric_slices(
             state_trajectories=rl_states,
             metric_fn=disagreement_metric,
             metric_name="Pop x Disagreement",
             num_drugs=num_drugs,
+            resolution=60,
+            x3_slices=None,
             is_three_state=is_three_state,
+            cmap_name="plasma",
+            mincnt=0,
         )
-        fig_pop_dis.savefig(
+        fig.savefig(
             str(project_root / "log" / f"{sig}_dashboard_pop_x_disagreement.png"),
             dpi=200,
             bbox_inches="tight",
         )
-        plt.close(fig_pop_dis)
+        plt.close(fig)
 
         # 9. Steady state frequencies on decision boundaries
         print("Plotting Steady State Frequencies over Decision Boundary...")
@@ -763,13 +762,43 @@ def main():
     # 10. Frequency trajectories
     print("Plotting Frequency Trajectories...")
 
-    def plot_freq_traj(states_list, title_prefix, filename_suffix):
+    def plot_freq_traj(states_list, actions_list, title_prefix, filename_suffix):
+        import matplotlib.patches as mpatches
         states_arr = np.array(states_list)  # (runs, steps, genotypes)
         mean_freqs = np.mean(states_arr, axis=0)  # (steps, genotypes)
         steps = np.arange(mean_freqs.shape[0])
+        
+        # Calculate Steady State
+        steady_state_step = None
+        for t in range(len(steps) - 50):
+            if np.max(np.std(mean_freqs[t:t+50], axis=0)) < 1e-3:
+                steady_state_step = t
+                break
+                
         plt.figure(figsize=(12, 6))
+        
+        # Plot Drug Highlights using first run as representative
+        first_run_actions = actions_list[0]
+        drug_colors = ['#ff9999', '#99ccff', '#99ff99', '#ffcc99', '#cc99ff', '#ffff99', '#ff99cc', '#99ffff']
+        
+        current_action = first_run_actions[0]
+        start_step = 0
+        for t in range(1, len(first_run_actions)):
+            if first_run_actions[t] != current_action:
+                c = drug_colors[current_action % len(drug_colors)]
+                plt.axvspan(start_step, t, color=c, alpha=0.3, lw=0)
+                current_action = first_run_actions[t]
+                start_step = t
+        c = drug_colors[current_action % len(drug_colors)]
+        plt.axvspan(start_step, len(first_run_actions) - 1, color=c, alpha=0.3, lw=0)
+
+        # Plot Frequency lines
         for i in range(mean_freqs.shape[1]):
             plt.plot(steps, mean_freqs[:, i], label=genotype_labels[i], lw=2)
+
+        # Plot Steady state line
+        if steady_state_step is not None:
+            plt.axvline(x=steady_state_step, color='k', linestyle='--', lw=2, label=f'Steady State (t={steady_state_step})')
 
         plt.ylim(0, 1)
         plt.grid(True, ls="--", alpha=0.4)
@@ -780,7 +809,14 @@ def main():
         )
         plt.xlabel("RL Steps", fontsize=12)
         plt.ylabel("Average Frequency", fontsize=12)
-        plt.legend(fontsize=10, loc="center right", bbox_to_anchor=(1.15, 0.5))
+        
+        # Custom legend for drugs
+        unique_actions = np.unique(first_run_actions)
+        drug_patches = [mpatches.Patch(color=drug_colors[a % len(drug_colors)], alpha=0.3, label=f'Drug {a}') for a in unique_actions]
+        handles, labels = plt.gca().get_legend_handles_labels()
+        handles.extend(drug_patches)
+        
+        plt.legend(handles=handles, fontsize=10, loc="center right", bbox_to_anchor=(1.15, 0.5))
         plt.tight_layout()
         plt.savefig(
             str(project_root / "log" / f"{sig}_dashboard_freqs_{filename_suffix}.png"),
@@ -788,10 +824,12 @@ def main():
             bbox_inches="tight",
         )
         plt.close()
+        return steady_state_step
 
-    plot_freq_traj(rl_states, "Learned Policy", "RL")
-    plot_freq_traj(sh_states, "SHEPHERD Policy", "SHEPHERD")
-    plot_freq_traj(gr_states, "Greedy Policy", "Greedy")
+    ss_rl = plot_freq_traj(rl_states, rl_actions, "Learned Policy", "RL")
+    ss_sh = plot_freq_traj(sh_states, sh_actions, "SHEPHERD Policy", "SHEPHERD")
+    ss_gr = plot_freq_traj(gr_states, gr_actions, "Greedy Policy", "Greedy")
+    print(f"Time to Steady State (steps) - RL: {ss_rl}, SHEPHERD: {ss_sh}, Greedy: {ss_gr}")
 
     # Print out final steady-state fitnesses for Greedy, SHEPHERD, and REMARC and each of the drugs.
 
