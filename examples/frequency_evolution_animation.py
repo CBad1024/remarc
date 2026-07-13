@@ -39,7 +39,7 @@ from tianshou.data import Batch
 # Constants
 # ---------------------------------------------------------------------------
 
-DRUG_NAMES = ['Drug_A', 'Drug_B', 'Drug_C', 'Drug_D']
+DRUG_NAMES = ["Drug_A", "Drug_B", "Drug_C", "Drug_D"]
 NUM_DRUGS = 4
 NUM_GENOTYPES = 8
 GENOTYPE_LABELS = [bin(i)[2:].zfill(3) for i in range(NUM_GENOTYPES)]
@@ -73,20 +73,26 @@ DRUG_SOLID_COLORS = [
 # Policy classes
 # ---------------------------------------------------------------------------
 
+
 class _FixedDrugPolicy:
     """Always chooses a single drug index."""
+
     def __init__(self, drug_idx: int):
         self.drug_idx = drug_idx
+
     def __call__(self, batch):
         import tianshou.data as td
+
         n = len(batch.obs) if hasattr(batch, "obs") else 1
         return td.Batch(act=np.full(n, self.drug_idx, dtype=int))
 
 
 class _RandomPolicy:
     """Uniform random over all drugs."""
+
     def __call__(self, batch):
         import tianshou.data as td
+
         n = len(batch.obs) if hasattr(batch, "obs") else 1
         return td.Batch(act=np.random.randint(0, NUM_DRUGS, size=n))
 
@@ -95,28 +101,33 @@ class _RandomPolicy:
 # Simulation helpers
 # ---------------------------------------------------------------------------
 
+
 def _collect_frame_data(env, policy, episode_steps: int) -> list:
     frames = []
     env.reset()
     obs = env.get_obs()
 
     freqs0 = env.freqs.copy()
-    frames.append({
-        "freqs": freqs0,
-        "drug_idx": env.current_drug,
-        "mean_fit": float(env.avg_fitness()),
-    })
+    frames.append(
+        {
+            "freqs": freqs0,
+            "drug_idx": env.current_drug,
+            "mean_fit": float(env.avg_fitness()),
+        }
+    )
 
     for _ in range(episode_steps):
         batch = Batch(obs=[obs], info=Batch())
         action = int(policy(batch).act[0])
         obs, _, terminated, _, _ = env.step(action)
         freqs = np.array(obs, dtype=float)
-        frames.append({
-            "freqs": freqs,
-            "drug_idx": env.current_drug,
-            "mean_fit": float(env.avg_fitness()),
-        })
+        frames.append(
+            {
+                "freqs": freqs,
+                "drug_idx": env.current_drug,
+                "mean_fit": float(env.avg_fitness()),
+            }
+        )
         if terminated:
             break
 
@@ -139,6 +150,7 @@ def _drug_intervals(fdl: list) -> list:
 # ---------------------------------------------------------------------------
 # Plotly trace builders
 # ---------------------------------------------------------------------------
+
 
 def _build_surface(ls_matrix: np.ndarray) -> go.Surface:
     z_lists = [row.tolist() for row in ls_matrix]
@@ -173,37 +185,56 @@ def _scatter_for_frame(fd: dict, ls: np.ndarray) -> go.Scatter3d:
         for i in range(NUM_GENOTYPES)
     ]
     return go.Scatter3d(
-        x=list(range(NUM_GENOTYPES)), y=[d] * NUM_GENOTYPES, z=z,
+        x=list(range(NUM_GENOTYPES)),
+        y=[d] * NUM_GENOTYPES,
+        z=z,
         mode="markers+text",
         marker=dict(
             size=_marker_sizes(freqs),
-            color=ls[d].tolist(), colorscale="Plasma",
-            cmin=GLOBAL_FIT_MIN, cmax=GLOBAL_FIT_MAX,
-            opacity=0.92, line=dict(color="white", width=0.8),
+            color=ls[d].tolist(),
+            colorscale="Plasma",
+            cmin=GLOBAL_FIT_MIN,
+            cmax=GLOBAL_FIT_MAX,
+            opacity=0.92,
+            line=dict(color="white", width=0.8),
         ),
         text=GENOTYPE_LABELS,
         textposition="top center",
         textfont=dict(size=8, color="white"),
-        hovertext=hover, hoverinfo="text",
-        name=f"Population ({DRUG_NAMES[d]})", showlegend=False,
+        hovertext=hover,
+        hoverinfo="text",
+        name=f"Population ({DRUG_NAMES[d]})",
+        showlegend=False,
     )
 
 
 def _gauge_trace(mean_fit: float) -> go.Scatter3d:
     return go.Scatter3d(
-        x=[NUM_GENOTYPES + 0.5], y=[NUM_DRUGS - 1], z=[mean_fit],
+        x=[NUM_GENOTYPES + 0.5],
+        y=[NUM_DRUGS - 1],
+        z=[mean_fit],
         mode="markers+text",
         marker=dict(
-            size=22, color=mean_fit,
-            colorscale=[[0,"#7b2d8b"],[0.3,"#e05c2c"],[0.6,"#f0c229"],[1,"#f5f5aa"]],
-            cmin=GLOBAL_FIT_MIN, cmax=GLOBAL_FIT_MAX,
-            symbol="diamond", opacity=1.0,
+            size=22,
+            color=mean_fit,
+            colorscale=[
+                [0, "#7b2d8b"],
+                [0.3, "#e05c2c"],
+                [0.6, "#f0c229"],
+                [1, "#f5f5aa"],
+            ],
+            cmin=GLOBAL_FIT_MIN,
+            cmax=GLOBAL_FIT_MAX,
+            symbol="diamond",
+            opacity=1.0,
         ),
         text=[f"<b>μ={mean_fit:.3f}</b>"],
         textposition="middle right",
         textfont=dict(size=13, color="white"),
-        hovertext=[f"Mean fitness: {mean_fit:.3f}"], hoverinfo="text",
-        name="Mean Fitness", showlegend=False,
+        hovertext=[f"Mean fitness: {mean_fit:.3f}"],
+        hoverinfo="text",
+        name="Mean Fitness",
+        showlegend=False,
     )
 
 
@@ -211,7 +242,13 @@ def _gauge_trace(mean_fit: float) -> go.Scatter3d:
 # Figure builders
 # ---------------------------------------------------------------------------
 
-def _build_fig3d(frame_data_list: list, ls: np.ndarray, panel_id: str, include_plotlyjs: Union[str, bool] = False) -> str:
+
+def _build_fig3d(
+    frame_data_list: list,
+    ls: np.ndarray,
+    panel_id: str,
+    include_plotlyjs: Union[str, bool] = False,
+) -> str:
     """Build and return the 3D figure as an HTML div snippet."""
     surface = _build_surface(ls)
     frames_pl = []
@@ -220,132 +257,256 @@ def _build_fig3d(frame_data_list: list, ls: np.ndarray, panel_id: str, include_p
     for i, fd in enumerate(frame_data_list):
         d_idx = fd["drug_idx"]
         drug_name = DRUG_NAMES[d_idx]
-        frames_pl.append(go.Frame(
-            data=[surface, _scatter_for_frame(fd, ls), _gauge_trace(fd["mean_fit"])],
-            name=str(i),
-            layout=go.Layout(annotations=[
-                dict(x=0.02, y=0.97, xref="paper", yref="paper",
-                     text=f"<b>Drug: {drug_name}</b>",
-                     font=dict(size=18, color="white"),
-                     bgcolor="rgba(20,20,50,0.80)",
-                     bordercolor=DRUG_SOLID_COLORS[d_idx],
-                     borderwidth=2, borderpad=6, showarrow=False, align="left"),
-                dict(x=0.98, y=0.97, xref="paper", yref="paper",
-                     text=f"Step {i} | μ={fd['mean_fit']:.3f}",
-                     font=dict(size=11, color="rgba(200,200,200,0.9)"),
-                     showarrow=False, align="right"),
-            ]),
-        ))
-        slider_steps.append(dict(
-            method="animate", label=str(i),
-            args=[[str(i)], dict(frame=dict(duration=200, redraw=True),
-                                 mode="immediate", transition=dict(duration=80))],
-        ))
+        frames_pl.append(
+            go.Frame(
+                data=[
+                    surface,
+                    _scatter_for_frame(fd, ls),
+                    _gauge_trace(fd["mean_fit"]),
+                ],
+                name=str(i),
+                layout=go.Layout(
+                    annotations=[
+                        dict(
+                            x=0.02,
+                            y=0.97,
+                            xref="paper",
+                            yref="paper",
+                            text=f"<b>Drug: {drug_name}</b>",
+                            font=dict(size=18, color="white"),
+                            bgcolor="rgba(20,20,50,0.80)",
+                            bordercolor=DRUG_SOLID_COLORS[d_idx],
+                            borderwidth=2,
+                            borderpad=6,
+                            showarrow=False,
+                            align="left",
+                        ),
+                        dict(
+                            x=0.98,
+                            y=0.97,
+                            xref="paper",
+                            yref="paper",
+                            text=f"Step {i} | μ={fd['mean_fit']:.3f}",
+                            font=dict(size=11, color="rgba(200,200,200,0.9)"),
+                            showarrow=False,
+                            align="right",
+                        ),
+                    ]
+                ),
+            )
+        )
+        slider_steps.append(
+            dict(
+                method="animate",
+                label=str(i),
+                args=[
+                    [str(i)],
+                    dict(
+                        frame=dict(duration=200, redraw=True),
+                        mode="immediate",
+                        transition=dict(duration=80),
+                    ),
+                ],
+            )
+        )
 
     init_d = frame_data_list[0]["drug_idx"]
     fig = go.Figure(
-        data=[surface, _scatter_for_frame(frame_data_list[0], ls), _gauge_trace(frame_data_list[0]["mean_fit"])],
+        data=[
+            surface,
+            _scatter_for_frame(frame_data_list[0], ls),
+            _gauge_trace(frame_data_list[0]["mean_fit"]),
+        ],
         frames=frames_pl,
     )
     fig.update_layout(
-        title=dict(text="Tumor Evolution – Chen et al. Fitness Landscape",
-                   font=dict(size=19, color="white"), x=0.5),
-        paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
+        title=dict(
+            text="Tumor Evolution – Chen et al. Fitness Landscape",
+            font=dict(size=19, color="white"),
+            x=0.5,
+        ),
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
         font=dict(color="white"),
         scene=dict(
-            xaxis=dict(title="Genotype", tickvals=list(range(NUM_GENOTYPES)), ticktext=GENOTYPE_LABELS,
-                       tickfont=dict(size=8), gridcolor="rgba(100,100,150,0.3)", backgroundcolor="rgba(10,10,30,0)"),
-            yaxis=dict(title="Drug", tickvals=list(range(NUM_DRUGS)), ticktext=DRUG_NAMES,
-                       tickfont=dict(size=9), gridcolor="rgba(100,100,150,0.3)", backgroundcolor="rgba(10,10,30,0)"),
-            zaxis=dict(title="Fitness", range=[GLOBAL_FIT_MIN, GLOBAL_FIT_MAX],
-                       gridcolor="rgba(100,100,150,0.3)", backgroundcolor="rgba(10,10,30,0)"),
+            xaxis=dict(
+                title="Genotype",
+                tickvals=list(range(NUM_GENOTYPES)),
+                ticktext=GENOTYPE_LABELS,
+                tickfont=dict(size=8),
+                gridcolor="rgba(100,100,150,0.3)",
+                backgroundcolor="rgba(10,10,30,0)",
+            ),
+            yaxis=dict(
+                title="Drug",
+                tickvals=list(range(NUM_DRUGS)),
+                ticktext=DRUG_NAMES,
+                tickfont=dict(size=9),
+                gridcolor="rgba(100,100,150,0.3)",
+                backgroundcolor="rgba(10,10,30,0)",
+            ),
+            zaxis=dict(
+                title="Fitness",
+                range=[GLOBAL_FIT_MIN, GLOBAL_FIT_MAX],
+                gridcolor="rgba(100,100,150,0.3)",
+                backgroundcolor="rgba(10,10,30,0)",
+            ),
             camera=dict(eye=dict(x=1.6, y=-1.8, z=0.9), up=dict(x=0, y=0, z=1)),
-            bgcolor="rgba(10,10,30,1)", aspectmode="manual",
+            bgcolor="rgba(10,10,30,1)",
+            aspectmode="manual",
             aspectratio=dict(x=1.5, y=1.0, z=0.6),
         ),
         annotations=[
-            dict(x=0.02, y=0.97, xref="paper", yref="paper",
-                 text=f"<b>Drug: {DRUG_NAMES[init_d]}</b>",
-                 font=dict(size=18, color="white"), bgcolor="rgba(20,20,50,0.80)",
-                 bordercolor=DRUG_SOLID_COLORS[init_d], borderwidth=2, borderpad=6,
-                 showarrow=False, align="left"),
-            dict(x=0.98, y=0.97, xref="paper", yref="paper",
-                 text=f"Step 0 | μ={frame_data_list[0]['mean_fit']:.3f}",
-                 font=dict(size=11, color="rgba(200,200,200,0.9)"), showarrow=False, align="right"),
+            dict(
+                x=0.02,
+                y=0.97,
+                xref="paper",
+                yref="paper",
+                text=f"<b>Drug: {DRUG_NAMES[init_d]}</b>",
+                font=dict(size=18, color="white"),
+                bgcolor="rgba(20,20,50,0.80)",
+                bordercolor=DRUG_SOLID_COLORS[init_d],
+                borderwidth=2,
+                borderpad=6,
+                showarrow=False,
+                align="left",
+            ),
+            dict(
+                x=0.98,
+                y=0.97,
+                xref="paper",
+                yref="paper",
+                text=f"Step 0 | μ={frame_data_list[0]['mean_fit']:.3f}",
+                font=dict(size=11, color="rgba(200,200,200,0.9)"),
+                showarrow=False,
+                align="right",
+            ),
         ],
         updatemenus=[],
-        sliders=[dict(
-            active=0, steps=slider_steps,
-            x=0.1, len=0.8, xanchor="left", y=0.02, yanchor="top",
-            pad=dict(b=10, t=50),
-            currentvalue=dict(prefix="Step: ", visible=True, xanchor="center",
-                               font=dict(size=13, color="white")),
-            transition=dict(duration=100, easing="cubic-in-out"),
-            bgcolor="rgba(30,40,80,0.6)", bordercolor="rgba(100,120,200,0.5)",
-            tickcolor="white", font=dict(color="white"),
-        )],
+        sliders=[
+            dict(
+                active=0,
+                steps=slider_steps,
+                x=0.1,
+                len=0.8,
+                xanchor="left",
+                y=0.02,
+                yanchor="top",
+                pad=dict(b=10, t=50),
+                currentvalue=dict(
+                    prefix="Step: ",
+                    visible=True,
+                    xanchor="center",
+                    font=dict(size=13, color="white"),
+                ),
+                transition=dict(duration=100, easing="cubic-in-out"),
+                bgcolor="rgba(30,40,80,0.6)",
+                bordercolor="rgba(100,120,200,0.5)",
+                tickcolor="white",
+                font=dict(color="white"),
+            )
+        ],
         margin=dict(l=0, r=0, t=60, b=120),
         height=680,
     )
 
-    return fig.to_html(full_html=False, include_plotlyjs=include_plotlyjs, div_id=panel_id + "_3d")
+    return fig.to_html(
+        full_html=False, include_plotlyjs=include_plotlyjs, div_id=panel_id + "_3d"
+    )
 
 
-def _build_fig2d(frame_data_list: list, panel_id: str, fit_min_override=None, fit_max_override=None) -> tuple:
+def _build_fig2d(
+    frame_data_list: list, panel_id: str, fit_min_override=None, fit_max_override=None
+) -> tuple:
     """Build and return the 2D fitness timeline as an HTML div snippet + fitness JSON."""
     all_steps = list(range(len(frame_data_list)))
     all_fitness = [fd["mean_fit"] for fd in frame_data_list]
-    fit_min = fit_min_override if fit_min_override is not None else max(0.0, min(all_fitness) - 0.005)
-    fit_max = fit_max_override if fit_max_override is not None else min(GLOBAL_FIT_MAX, max(all_fitness) + 0.01)
+    fit_min = (
+        fit_min_override
+        if fit_min_override is not None
+        else max(0.0, min(all_fitness) - 0.005)
+    )
+    fit_max = (
+        fit_max_override
+        if fit_max_override is not None
+        else min(GLOBAL_FIT_MAX, max(all_fitness) + 0.01)
+    )
     intervals = _drug_intervals(frame_data_list)
 
     fitness_line = go.Scatter(
-        x=all_steps, y=all_fitness,
+        x=all_steps,
+        y=all_fitness,
         mode="lines+markers",
         line=dict(color="rgba(255,255,255,0.88)", width=2.5),
         marker=dict(size=5, color="rgba(255,255,255,0.6)"),
-        name="Mean Fitness", showlegend=False,
+        name="Mean Fitness",
+        showlegend=False,
         hovertemplate="Step %{x}<br>Fitness: %{y:.3f}<extra></extra>",
     )
     cursor = go.Scatter(
-        x=[0, 0], y=[fit_min, fit_max],
+        x=[0, 0],
+        y=[fit_min, fit_max],
         mode="lines",
         line=dict(color="rgba(255,90,90,0.95)", width=2.5, dash="dot"),
-        showlegend=False, hoverinfo="skip", name="Current Step",
+        showlegend=False,
+        hoverinfo="skip",
+        name="Current Step",
     )
 
     fig2d = go.Figure(data=[fitness_line, cursor])
 
-    for (t0, t1, d_idx) in intervals:
-        fig2d.add_vrect(x0=t0 - 0.5, x1=t1 + 0.5,
-                        fillcolor=DRUG_FILL_COLORS[d_idx], line_width=0, layer="below")
+    for t0, t1, d_idx in intervals:
+        fig2d.add_vrect(
+            x0=t0 - 0.5,
+            x1=t1 + 0.5,
+            fillcolor=DRUG_FILL_COLORS[d_idx],
+            line_width=0,
+            layer="below",
+        )
         fig2d.add_annotation(
-            x=(t0 + t1) / 2, y=fit_min + (fit_max - fit_min) * 0.05,
+            x=(t0 + t1) / 2,
+            y=fit_min + (fit_max - fit_min) * 0.05,
             text=DRUG_NAMES[d_idx],
             font=dict(size=9, color=DRUG_SOLID_COLORS[d_idx]),
             showarrow=False,
         )
 
     fig2d.update_layout(
-        paper_bgcolor="#0e1117", plot_bgcolor="#141824",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#141824",
         font=dict(color="white"),
-        xaxis=dict(title="Policy Step", gridcolor="rgba(100,100,150,0.25)",
-                   color="white", showgrid=True, zeroline=False),
-        yaxis=dict(title="Mean Fitness", range=[fit_min, fit_max],
-                   gridcolor="rgba(100,100,150,0.25)", color="white",
-                   showgrid=True, zeroline=False),
+        xaxis=dict(
+            title="Policy Step",
+            gridcolor="rgba(100,100,150,0.25)",
+            color="white",
+            showgrid=True,
+            zeroline=False,
+        ),
+        yaxis=dict(
+            title="Mean Fitness",
+            range=[fit_min, fit_max],
+            gridcolor="rgba(100,100,150,0.25)",
+            color="white",
+            showgrid=True,
+            zeroline=False,
+        ),
         margin=dict(l=60, r=20, t=20, b=50),
         height=280,
     )
 
-    html_2d = fig2d.to_html(full_html=False, include_plotlyjs=False,
-                             div_id=panel_id + "_2d", default_height="280px")
+    html_2d = fig2d.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        div_id=panel_id + "_2d",
+        default_height="280px",
+    )
     return html_2d, json.dumps(all_fitness), fit_min, fit_max
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def create_frequency_gif(
     episode_steps: int = 75,
@@ -366,21 +527,29 @@ def create_frequency_gif(
 
     def _make_env():
         return WrightFisherEnv(
-            num_drugs=NUM_DRUGS, seq_length=v_N,
-            landscape_list=landscape_list, pop_size=pop_size,
-            gen_per_step=gen_per_step, total_generations=total_gens,
+            num_drugs=NUM_DRUGS,
+            seq_length=v_N,
+            landscape_list=landscape_list,
+            pop_size=pop_size,
+            gen_per_step=gen_per_step,
+            total_generations=total_gens,
         )
 
     # ---- Find best single drug (max mean fitness across all genotypes) ----
     best_drug_idx = int(np.argmax(ls.mean(axis=1)))
     best_drug_name = DRUG_NAMES[best_drug_idx]
-    print(f"Best single drug: {best_drug_name} (index {best_drug_idx}, "
-          f"mean fitness {ls[best_drug_idx].mean():.3f})")
+    print(
+        f"Best single drug: {best_drug_name} (index {best_drug_idx}, "
+        f"mean fitness {ls[best_drug_idx].mean():.3f})"
+    )
 
     # ---- Load optimal policy ----
     from dataclasses import replace
+
     p_base = Presets.p1_ls()
-    p = replace(p_base, state_shape=(NUM_GENOTYPES,), num_actions=NUM_DRUGS, dataset="chen")
+    p = replace(
+        p_base, state_shape=(NUM_GENOTYPES,), num_actions=NUM_DRUGS, dataset="chen"
+    )
     import torch as _torch
 
     policy_path = policy_filename
@@ -394,8 +563,8 @@ def create_frequency_gif(
 
     if os.path.exists(policy_path):
         from remarc.agents.tianshou_agent import get_ppo_policy
-        _train_envs, _ = WrightFisherEnv.get_env(2, 2,
-                                                   landscape_list=landscape_list)
+
+        _train_envs, _ = WrightFisherEnv.get_env(2, 2, landscape_list=landscape_list)
         opt_policy = get_ppo_policy(p, _train_envs)
         try:
             opt_policy.load_state_dict(_torch.load(policy_path, map_location="cpu"))
@@ -404,7 +573,8 @@ def create_frequency_gif(
         except Exception:
             try:
                 opt_policy.load_state_dict(
-                    _torch.load(policy_path, map_location="cpu"), strict=False)
+                    _torch.load(policy_path, map_location="cpu"), strict=False
+                )
                 print(f"Loaded policy (non-strict) from: {policy_path}")
                 opt_loaded = True
             except Exception as e2:
@@ -417,9 +587,12 @@ def create_frequency_gif(
 
     # ---- Simulate all three policies ----
     policies = {
-        "single": (f"Best Single Drug ({best_drug_name})", _FixedDrugPolicy(best_drug_idx)),
-        "random": ("Random Policy",         _RandomPolicy()),
-        "opt":    ("Optimal Policy (Chen)",       opt_policy),
+        "single": (
+            f"Best Single Drug ({best_drug_name})",
+            _FixedDrugPolicy(best_drug_idx),
+        ),
+        "random": ("Random Policy", _RandomPolicy()),
+        "opt": ("Optimal Policy (Chen)", opt_policy),
     }
 
     frames_by_policy = {}
@@ -446,7 +619,8 @@ def create_frequency_gif(
         html_3d_div = _build_fig3d(fdl, ls, panel_id=key, include_plotlyjs=plotlyjs)
 
         html_2d_div, fitness_json, _, _ = _build_fig2d(
-            fdl, panel_id=key,
+            fdl,
+            panel_id=key,
             fit_min_override=shared_fit_min,
             fit_max_override=shared_fit_max,
         )
@@ -465,9 +639,9 @@ def create_frequency_gif(
     for key, pd in panels.items():
         js_bridges.append(f"""
     (function() {{
-      var fitnessVals = {pd['fitness_json']};
-      var fitMin = {pd['fit_min']};
-      var fitMax = {pd['fit_max']};
+      var fitnessVals = {pd["fitness_json"]};
+      var fitMin = {pd["fit_min"]};
+      var fitMax = {pd["fit_max"]};
       var gd3 = document.getElementById('{key}_3d');
       var gd2 = document.getElementById('{key}_2d');
 
@@ -493,9 +667,9 @@ def create_frequency_gif(
         display = "block" if key == "opt" else "none"
         panel_divs.append(f"""
     <div id="panel-{key}" class="policy-panel" style="display:{display};">
-      <div class="panel-3d">{pd['html_3d']}</div>
+      <div class="panel-3d">{pd["html_3d"]}</div>
       <hr class="sep">
-      <div class="panel-2d">{pd['html_2d']}</div>
+      <div class="panel-2d">{pd["html_2d"]}</div>
     </div>""")
 
     panel_divs_html = "\n".join(panel_divs)
@@ -688,7 +862,9 @@ def create_frequency_gif(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Generate Chen tumor evolution animation")
+    parser = argparse.ArgumentParser(
+        description="Generate Chen tumor evolution animation"
+    )
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("--policy", type=str, default="best_policy_chen.pth")
     parser.add_argument("--output", type=str, default="wf_tumor_evolution_chen.html")

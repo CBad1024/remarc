@@ -1,10 +1,12 @@
 import numpy as np
 
+
 class GreedyAgent:
     """
     A baseline greedy agent that evaluates all available drug actions
     and picks the one that minimizes the immediate mean fitness of the population.
     """
+
     def __init__(self, drug_landscapes):
         """
         Args:
@@ -12,7 +14,7 @@ class GreedyAgent:
                              representing the fitness of each genotype under each drug.
         """
         self.drug_landscapes = np.asarray(drug_landscapes)
-        
+
     def get_action(self, state_array):
         """
         Args:
@@ -22,7 +24,7 @@ class GreedyAgent:
         """
         # Calculate mean fitness for each drug: dot product of frequencies and fitness
         mean_fitnesses = self.drug_landscapes.dot(state_array)
-        
+
         # We want to minimize fitness (maximize drug efficacy / death rate)
         best_drug = np.argmin(mean_fitnesses)
         return int(best_drug)

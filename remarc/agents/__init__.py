@@ -4,7 +4,7 @@ from .tianshou_agent import (
     train_wf_landscapes,
     get_ppo_policy,
     load_best_fn,
-    load_random_policy
+    load_random_policy,
 )
 from .shepherd_eval import ShepherdMDP
 from .onnx_agent import ONNXAgent
@@ -19,5 +19,5 @@ __all__ = [
     "load_best_fn",
     "load_random_policy",
     "ONNXAgent",
-    "GreedyAgent"
+    "GreedyAgent",
 ]

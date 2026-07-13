@@ -54,12 +54,19 @@ class ShepherdMDP:
         MDP discount factor γ for value iteration.
     """
 
-    def __init__(self, mutation_matrix, drug_landscapes, pop_size=10000,
-                 L=3, dt=500, discount=0.99):
-        self.M = mutation_matrix.shape[0]       # number of genotypes
-        self.d = self.M - 1                     # dimension of u-space
+    def __init__(
+        self,
+        mutation_matrix,
+        drug_landscapes,
+        pop_size=10000,
+        L=3,
+        dt=500,
+        discount=0.99,
+    ):
+        self.M = mutation_matrix.shape[0]  # number of genotypes
+        self.d = self.M - 1  # dimension of u-space
         self.L = L
-        self.a = 1.0 / L                       # grid cell width
+        self.a = 1.0 / L  # grid cell width
         self.dt = dt
         self.discount = discount
         self.pop_size = pop_size
@@ -73,10 +80,10 @@ class ShepherdMDP:
         self.actions = list(range(self.num_drugs))
 
         # u-space grid
-        self.N_states = L ** self.d
+        self.N_states = L**self.d
         self.centers = self.a * (0.5 + np.arange(L))
         self.states = self._build_states()
-        self.strides = [L ** r for r in range(self.d)]
+        self.strides = [L**r for r in range(self.d)]
 
         # Populated by solve()
         self.policy = None
@@ -96,7 +103,7 @@ class ShepherdMDP:
         for k in range(1, M):
             uk = u[k - 1]
             x[k] = uk * S
-            S *= (1.0 - uk)
+            S *= 1.0 - uk
         x[0] = S
         return x
 
@@ -113,7 +120,7 @@ class ShepherdMDP:
         prod = 1.0
         for i in range(d):
             S[i] = prod
-            prod *= (1.0 - u[i])
+            prod *= 1.0 - u[i]
         return S
 
     @staticmethod
@@ -151,14 +158,14 @@ class ShepherdMDP:
         u = np.asarray(u, float)
         d = u.size
         x = self.x_from_u(u)
-        Ax = self.Mmat @ x                         # length M
+        Ax = self.Mmat @ x  # length M
         # Prefix sums of Ax over indices 1..M-1
-        pref = np.concatenate([[0.0], np.cumsum(Ax[1:])])   # length d+1
+        pref = np.concatenate([[0.0], np.cumsum(Ax[1:])])  # length d+1
         S = self.S_prefix(u)
         A = np.zeros(d, float)
-        for k in range(d):          # u-index k ↔ x-index k+1
+        for k in range(d):  # u-index k ↔ x-index k+1
             Akx = Ax[k + 1]
-            sum_prev = pref[k]      # Σ_{i=1}^{k} Ax[i]
+            sum_prev = pref[k]  # Σ_{i=1}^{k} Ax[i]
             A[k] = (Akx + u[k] * sum_prev) / S[k]
         return A
 
@@ -166,7 +173,7 @@ class ShepherdMDP:
         """Selection drift A^{sel}(u) using compact tail-sum form."""
         u = np.asarray(u, float)
         d = u.size
-        s = self.get_s_vec(action)      # length d, s[0] ↔ genotype 1
+        s = self.get_s_vec(action)  # length d, s[0] ↔ genotype 1
         x = self.x_from_u(u)
         S = self.S_prefix(u)
         # Tail sums: T_k = Σ_{j=k}^{d-1} x_{j+1} · s_j
@@ -205,14 +212,14 @@ class ShepherdMDP:
         """Flat index → multi-index (length d)."""
         idx = np.empty(self.d, int)
         for r in range(self.d):
-            idx[r] = (n // (self.L ** r)) % self.L
+            idx[r] = (n // (self.L**r)) % self.L
         return idx
 
     def multi_to_index(self, idx):
         """Multi-index → flat index."""
         n = 0
         for r, ir in enumerate(idx):
-            n += (self.L ** r) * ir
+            n += (self.L**r) * ir
         return n
 
     # ------------------------------------------------------------------
@@ -239,12 +246,12 @@ class ShepherdMDP:
                 # Forward neighbor along axis r
                 if idx[r] < self.L - 1:
                     m = n + self.strides[r]
-                    rate = D[r] / self.a ** 2 + A[r] / (2 * self.a)
+                    rate = D[r] / self.a**2 + A[r] / (2 * self.a)
                     Omega[n, m] = rate
                 # Backward neighbor along axis r
                 if idx[r] > 0:
                     m = n - self.strides[r]
-                    rate = D[r] / self.a ** 2 - A[r] / (2 * self.a)
+                    rate = D[r] / self.a**2 - A[r] / (2 * self.a)
                     Omega[n, m] = rate
 
         # Diagonal: rows sum to zero
@@ -269,17 +276,21 @@ class ShepherdMDP:
         """
         # Convert to CSC format for efficient expm computation
         Omega = Omega.tocsc()
-        
+
         import warnings
         from scipy.sparse import SparseEfficiencyWarning
-        
+
         import scipy.linalg
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SparseEfficiencyWarning)
             if self.N_states <= 10000:
-                print(f"Computing dense expm for {self.N_states}x{self.N_states} matrix...")
+                print(
+                    f"Computing dense expm for {self.N_states}x{self.N_states} matrix..."
+                )
                 W_dense = scipy.linalg.expm((Omega * self.dt).toarray())
                 from scipy.sparse import csr_matrix
+
                 W = csr_matrix(W_dense)
             else:
                 W = sparse_expm(Omega * self.dt)
@@ -322,14 +333,16 @@ class ShepherdMDP:
             R[s, a] = −x(u_s) · f_a  (negative mean fitness).
         """
         # Vectorize reward computation
-        S_arr = np.array(self.states)                           # (N_states, d)
-        X = np.vstack([self.x_from_u(u) for u in S_arr])       # (N_states, M)
+        S_arr = np.array(self.states)  # (N_states, d)
+        X = np.vstack([self.x_from_u(u) for u in S_arr])  # (N_states, M)
 
         P = []
         R = np.zeros((self.N_states, len(self.actions)), dtype=float)
 
         for a in self.actions:
-            print(f"Computing transition matrix for action {a+1} of {len(self.actions)}...")
+            print(
+                f"Computing transition matrix for action {a + 1} of {len(self.actions)}..."
+            )
             # Build sparse generator Ω(a)
             Omega = self.build_transition_rate_matrix(a)
             # Sparse expm + normalize
@@ -353,15 +366,15 @@ class ShepherdMDP:
             Value function.
         """
         P, R = self.build_W_and_R()
-        
+
         import warnings
         from scipy.sparse import SparseEfficiencyWarning
-        
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SparseEfficiencyWarning)
             vi = mdp.ValueIteration(P, R, discount=self.discount, max_iter=max_iter)
             vi.run()
-            
+
         self.policy = np.array(vi.policy)
         self.value = np.array(vi.V)
         return self.policy, self.value
@@ -375,10 +388,12 @@ class ShepherdMDP:
     def load(self, filepath):
         """Load a solved policy and value function from a numpy archive."""
         data = np.load(filepath)
-        if data['L'] != self.L or data['d'] != self.d:
-            raise ValueError(f"Loaded policy shape (L={data['L']}, d={data['d']}) does not match current MDP parameters (L={self.L}, d={self.d}).")
-        self.policy = data['policy']
-        self.value = data['value']
+        if data["L"] != self.L or data["d"] != self.d:
+            raise ValueError(
+                f"Loaded policy shape (L={data['L']}, d={data['d']}) does not match current MDP parameters (L={self.L}, d={self.d})."
+            )
+        self.policy = data["policy"]
+        self.value = data["value"]
 
     # ------------------------------------------------------------------
     # Policy query

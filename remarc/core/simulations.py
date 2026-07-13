@@ -1,11 +1,16 @@
 import gymnasium
 import numpy as np
 import pandas as pd
-import tianshou as ts
 from examples.train import log_trajectory_step
 
 
-def run_one_drug_sim(env : gymnasium.Env, drug_A : int = 0, num_episodes : int = 10, episode_length : int = 20, signature : str | None = None):
+def run_one_drug_sim(
+    env: gymnasium.Env,
+    drug_A: int = 0,
+    num_episodes: int = 10,
+    episode_length: int = 20,
+    signature: str | None = None,
+):
     """
     Simulates the environment for a number of episodes using a given policy.
 
@@ -40,13 +45,19 @@ def run_one_drug_sim(env : gymnasium.Env, drug_A : int = 0, num_episodes : int =
             fitnesses.append(env.get_fitness())
             time_steps.append(j)
             episodes.append(i)
-            
+
             # Real-time trajectory logging
-            log_trajectory_step(signature, i, j, int(np.argmax(obs)), env.get_fitness(), int(action))
+            log_trajectory_step(
+                signature, i, j, int(np.argmax(obs)), env.get_fitness(), int(action)
+            )
 
     results_df = pd.DataFrame(
-        {"Episode": episodes, "Time Step": time_steps, "State": states, "Action": actions, "Fitness": fitnesses})
+        {
+            "Episode": episodes,
+            "Time Step": time_steps,
+            "State": states,
+            "Action": actions,
+            "Fitness": fitnesses,
+        }
+    )
     return results_df
-            
-            
-            

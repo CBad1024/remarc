@@ -15,6 +15,7 @@ from remarc.core.landscapes import Landscape
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def env_4state():
     """4-genotype (N=2) deterministic environment."""
@@ -23,10 +24,13 @@ def env_4state():
         Landscape(N=2, sigma=0.0, ls=np.array([0.95, 1.0, 1.1, 0.9])),
     ]
     return WrightFisherEnv(
-        seq_length=2, landscape_list=landscapes,
-        mutation_rate=1e-3, pop_size=10000,
-        gen_per_step=10, total_generations=100,
-        stochastic=False
+        seq_length=2,
+        landscape_list=landscapes,
+        mutation_rate=1e-3,
+        pop_size=10000,
+        gen_per_step=10,
+        total_generations=100,
+        stochastic=False,
     )
 
 
@@ -39,10 +43,13 @@ def env_8state():
         Landscape(N=3, sigma=0.0, ls=ls_vals[::-1]),
     ]
     return WrightFisherEnv(
-        seq_length=3, landscape_list=landscapes,
-        mutation_rate=1e-3, pop_size=10000,
-        gen_per_step=10, total_generations=100,
-        stochastic=False
+        seq_length=3,
+        landscape_list=landscapes,
+        mutation_rate=1e-3,
+        pop_size=10000,
+        gen_per_step=10,
+        total_generations=100,
+        stochastic=False,
     )
 
 
@@ -53,14 +60,18 @@ def env_4state_stochastic():
         Landscape(N=2, sigma=0.0, ls=np.array([1.0, 1.1, 0.9, 1.05])),
     ]
     return WrightFisherEnv(
-        seq_length=2, landscape_list=landscapes,
-        mutation_rate=1e-3, pop_size=10000,
-        gen_per_step=10, total_generations=100,
-        stochastic=True
+        seq_length=2,
+        landscape_list=landscapes,
+        mutation_rate=1e-3,
+        pop_size=10000,
+        gen_per_step=10,
+        total_generations=100,
+        stochastic=True,
     )
 
 
 # ── Mutation Matrix Tests ────────────────────────────────────────────────
+
 
 class TestMutationMatrix:
     """Tests for the pre-computed mutation matrix U."""
@@ -81,16 +92,19 @@ class TestMutationMatrix:
         """Only Hamming-1 neighbors should have nonzero off-diagonal entries."""
         U = env_4state.mutation_matrix
         M = env_4state.num_genotypes
-        N = env_4state.seq_length
         for i in range(M):
             for j in range(M):
                 if i == j:
                     continue
-                hamming = bin(i ^ j).count('1')
+                hamming = bin(i ^ j).count("1")
                 if hamming == 1:
-                    assert U[i, j] > 0, f"U[{i},{j}] should be nonzero (Hamming-1 neighbor)"
+                    assert U[i, j] > 0, (
+                        f"U[{i},{j}] should be nonzero (Hamming-1 neighbor)"
+                    )
                 else:
-                    assert U[i, j] == 0, f"U[{i},{j}] should be zero (Hamming distance {hamming})"
+                    assert U[i, j] == 0, (
+                        f"U[{i},{j}] should be zero (Hamming distance {hamming})"
+                    )
 
     def test_hamming1_connectivity_8state(self, env_8state):
         """Only Hamming-1 neighbors should have nonzero off-diagonal entries."""
@@ -100,7 +114,7 @@ class TestMutationMatrix:
             for j in range(M):
                 if i == j:
                     continue
-                hamming = bin(i ^ j).count('1')
+                hamming = bin(i ^ j).count("1")
                 if hamming == 1:
                     assert U[i, j] > 0
                 else:
@@ -135,6 +149,7 @@ class TestMutationMatrix:
 
 # ── Selection Step Tests ─────────────────────────────────────────────────
 
+
 class TestSelection:
     """Tests for the selection step: x_sel = f * x / f_bar."""
 
@@ -161,6 +176,7 @@ class TestSelection:
 
 
 # ── Deterministic Mode Tests ─────────────────────────────────────────────
+
 
 class TestDeterministicMode:
     """Tests for the Fokker-Planck (deterministic) mode."""
@@ -199,6 +215,7 @@ class TestDeterministicMode:
 
 # ── Stochastic Mode Tests ───────────────────────────────────────────────
 
+
 class TestStochasticMode:
     """Tests for the stochastic Wright-Fisher mode."""
 
@@ -220,7 +237,9 @@ class TestStochasticMode:
         env_4state_stochastic.reset()
         env_4state_stochastic.step(0)
         counts = env_4state_stochastic.freqs * env_4state_stochastic.pop_size
-        np.testing.assert_allclose(counts.sum(), env_4state_stochastic.pop_size, atol=1e-10)
+        np.testing.assert_allclose(
+            counts.sum(), env_4state_stochastic.pop_size, atol=1e-10
+        )
 
     def test_stochastic_introduces_variance(self, env_4state_stochastic):
         """Multiple runs from the same state should NOT all be identical."""
@@ -233,10 +252,13 @@ class TestStochasticMode:
 
         # Check that not all results are identical (stochasticity should produce variation)
         all_same = all(np.array_equal(results[0], r) for r in results[1:])
-        assert not all_same, "Stochastic mode should produce different results across runs"
+        assert not all_same, (
+            "Stochastic mode should produce different results across runs"
+        )
 
 
 # ── Gymnasium Interface Tests ────────────────────────────────────────────
+
 
 class TestGymnasiumInterface:
     """Tests for Gymnasium compatibility."""
@@ -283,6 +305,7 @@ class TestGymnasiumInterface:
 
 # ── Transition Matrix Tests ──────────────────────────────────────────────
 
+
 class TestTransitionMatrix:
     """Tests for the analytical transition matrix."""
 
@@ -300,6 +323,7 @@ class TestTransitionMatrix:
 
 # ── End-to-End Integration Tests ─────────────────────────────────────────
 
+
 class TestIntegration:
     """End-to-end tests simulating full episodes."""
 
@@ -310,10 +334,13 @@ class TestIntegration:
             Landscape(N=2, sigma=0.0, ls=np.array([0.95, 1.0, 1.1, 0.9])),
         ]
         env = WrightFisherEnv(
-            seq_length=2, landscape_list=landscapes,
-            mutation_rate=1e-3, pop_size=10000,
-            gen_per_step=50, total_generations=200,
-            stochastic=False
+            seq_length=2,
+            landscape_list=landscapes,
+            mutation_rate=1e-3,
+            pop_size=10000,
+            gen_per_step=50,
+            total_generations=200,
+            stochastic=False,
         )
         obs, _ = env.reset()
         assert obs.shape == (4,)
@@ -338,10 +365,13 @@ class TestIntegration:
             Landscape(N=3, sigma=0.0, ls=ls_vals[::-1]),
         ]
         env = WrightFisherEnv(
-            seq_length=3, landscape_list=landscapes,
-            mutation_rate=1e-3, pop_size=10000,
-            gen_per_step=50, total_generations=200,
-            stochastic=False
+            seq_length=3,
+            landscape_list=landscapes,
+            mutation_rate=1e-3,
+            pop_size=10000,
+            gen_per_step=50,
+            total_generations=200,
+            stochastic=False,
         )
         obs, _ = env.reset()
         assert obs.shape == (8,)
@@ -364,8 +394,13 @@ class TestIntegration:
             Landscape(N=2, sigma=0.0, ls=np.array([0.95, 1.0, 1.1, 0.9])),
         ]
         train_envs, test_envs = WrightFisherEnv.get_env(
-            2, 1, landscape_list=landscapes, seq_length=2,
-            gen_per_step=10, episode_steps=5, stochastic=False
+            2,
+            1,
+            landscape_list=landscapes,
+            seq_length=2,
+            gen_per_step=10,
+            episode_steps=5,
+            stochastic=False,
         )
         assert train_envs is not None
         assert test_envs is not None

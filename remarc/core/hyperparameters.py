@@ -1,18 +1,19 @@
 from dataclasses import dataclass
 from typing import Sequence
 
+
 @dataclass(frozen=True)
 class Presets:
-    state_shape : tuple[int, ...]
-    num_actions : int | Sequence[int] | None
-    lr : float
-    epochs : int
-    train_steps_per_epoch : int
-    test_episodes : int
-    batch_size : int
-    buffer_size : int
+    state_shape: tuple[int, ...]
+    num_actions: int | Sequence[int] | None
+    lr: float
+    epochs: int
+    train_steps_per_epoch: int
+    test_episodes: int
+    batch_size: int
+    buffer_size: int
     dataset: str = "chen"
-    activation : str | None = "relu"
+    activation: str | None = "relu"
     reward_clip: bool = False
     gen_per_step: int = 500
     ent_coef: float = 0.05
@@ -26,7 +27,6 @@ class Presets:
     stochastic: bool = True
     n_frames: int = 1
     delta_horizon: int = 1
-    
 
     @staticmethod
     def p1_ss():
@@ -45,7 +45,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=20,
             reward_scale=100.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -65,7 +65,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=20,
             reward_scale=100.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -85,7 +85,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=20,
             reward_scale=100.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -105,7 +105,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=20,
             reward_scale=100.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -125,7 +125,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=20,
             reward_scale=1.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -145,7 +145,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=100,
             reward_scale=100.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -166,7 +166,7 @@ class Presets:
             episode_steps=100,
             reward_scale=100.0,
             random_start=True,
-            n_frames=3
+            n_frames=3,
         )
 
     @staticmethod
@@ -186,7 +186,7 @@ class Presets:
             ent_coef=0.05,
             episode_steps=100,
             reward_scale=100.0,
-            random_start=True
+            random_start=True,
         )
 
     @staticmethod
@@ -207,5 +207,5 @@ class Presets:
             episode_steps=100,
             reward_scale=100.0,
             random_start=True,
-            n_frames=3
+            n_frames=3,
         )
