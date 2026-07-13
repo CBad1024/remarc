@@ -398,7 +398,7 @@ def main():
     def fitness_fn(x, a):
         return np.mean(np.dot(landscape_data[a], x))
 
-    fig_rl, pca_info = plot_dominant_modes(
+    fig_rl_pca, fig_rl_simplex, pca_info = plot_dominant_modes(
         state_trajectories=rl_states,
         policy_fn=lambda x: rl_policy_fn(x),
         fitness_fn=fitness_fn,
@@ -417,16 +417,23 @@ def main():
         simplex_view=True,
         title="Dominant Modes (REMARC Policy)",
     )
-    fig_rl.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_remarc.png"),
+    fig_rl_pca.savefig(
+        str(project_root / "log" / f"{sig}_dominant_modes_remarc_pca.png"),
         dpi=200,
         bbox_inches="tight",
     )
-    plt.close(fig_rl)
+    plt.close(fig_rl_pca)
+    if fig_rl_simplex is not None:
+        fig_rl_simplex.savefig(
+            str(project_root / "log" / f"{sig}_dominant_modes_remarc_simplex.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig_rl_simplex)
 
     print("REMARC PCA Info:", pca_info)
 
-    fig_gr, pca_info = plot_dominant_modes(
+    fig_gr_pca, fig_gr_simplex, pca_info = plot_dominant_modes(
         state_trajectories=gr_states,
         policy_fn=lambda x: gr_policy_fn(x),
         fitness_fn=fitness_fn,
@@ -445,16 +452,23 @@ def main():
         simplex_view=True,
         title="Dominant Modes (Greedy Policy)",
     )
-    fig_gr.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_greedy.png"),
+    fig_gr_pca.savefig(
+        str(project_root / "log" / f"{sig}_dominant_modes_greedy_pca.png"),
         dpi=200,
         bbox_inches="tight",
     )
-    plt.close(fig_gr)
+    plt.close(fig_gr_pca)
+    if fig_gr_simplex is not None:
+        fig_gr_simplex.savefig(
+            str(project_root / "log" / f"{sig}_dominant_modes_greedy_simplex.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig_gr_simplex)
 
     print("Greedy PCA Info:", pca_info)
 
-    fig_sh, pca_info = plot_dominant_modes(
+    fig_sh_pca, fig_sh_simplex, pca_info = plot_dominant_modes(
         state_trajectories=sh_states,
         policy_fn=lambda x: shepherd_fn(x),
         fitness_fn=fitness_fn,
@@ -473,12 +487,19 @@ def main():
         simplex_view=True,
         title="Dominant Modes (SHEPHERD Policy)",
     )
-    fig_sh.savefig(
-        str(project_root / "log" / f"{sig}_dominant_modes_shepherd.png"),
+    fig_sh_pca.savefig(
+        str(project_root / "log" / f"{sig}_dominant_modes_shepherd_pca.png"),
         dpi=200,
         bbox_inches="tight",
     )
-    plt.close(fig_sh)
+    plt.close(fig_sh_pca)
+    if fig_sh_simplex is not None:
+        fig_sh_simplex.savefig(
+            str(project_root / "log" / f"{sig}_dominant_modes_shepherd_simplex.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig_sh_simplex)
 
     if DATASET != "eight_state":
         # 2. Population distribution simplexes
@@ -644,6 +665,44 @@ def main():
                 bbox_inches="tight",
             )
             plt.close(fig)
+
+        # Pop x fitness and Pop x disagreement
+        print("Plotting Pop x fitness and Pop x disagreement...")
+        from examples.plotting import plot_pop_x_metric_slices
+        
+        def fitness_metric(x):
+            return fitness_fn(x, rl_policy_fn(x))
+            
+        fig_pop_fit = plot_pop_x_metric_slices(
+            state_trajectories=rl_states,
+            metric_fn=fitness_metric,
+            metric_name="Pop x Fitness",
+            num_drugs=num_drugs,
+            is_three_state=is_three_state,
+        )
+        fig_pop_fit.savefig(
+            str(project_root / "log" / f"{sig}_dashboard_pop_x_fitness.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig_pop_fit)
+
+        def disagreement_metric(x):
+            return 1.0 if rl_policy_fn(x) != gr_policy_fn(x) else 0.0
+
+        fig_pop_dis = plot_pop_x_metric_slices(
+            state_trajectories=rl_states,
+            metric_fn=disagreement_metric,
+            metric_name="Pop x Disagreement",
+            num_drugs=num_drugs,
+            is_three_state=is_three_state,
+        )
+        fig_pop_dis.savefig(
+            str(project_root / "log" / f"{sig}_dashboard_pop_x_disagreement.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+        plt.close(fig_pop_dis)
 
         # 9. Steady state frequencies on decision boundaries
         print("Plotting Steady State Frequencies over Decision Boundary...")

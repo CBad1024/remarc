@@ -1256,6 +1256,14 @@ def flatten_state_trajectories(
 
 
 # HELPER: get mean trajectory across runs, optionally with burn-in and stride
+
+def std_trajectory(state_trajectories, burn_in=0, stride=1, max_steps=None):
+    arr = np.asarray(state_trajectories, dtype=float)  # (runs, steps, M)
+    if max_steps is not None:
+        arr = arr[:, :max_steps, :]
+    arr = arr[:, burn_in::stride, :]
+    return arr.std(axis=0)  # (steps, M)
+
 def mean_trajectory(state_trajectories, burn_in=0, stride=1, max_steps=None):
     arr = np.asarray(state_trajectories, dtype=float)  # (runs, steps, M)
     if max_steps is not None:
@@ -1654,10 +1662,10 @@ def plot_dominant_modes(
             "components"
         ].T
 
+    fig, axes = plt.subplots(1, 1, figsize=(6, 5))
     if simplex_view and cev[2] >= explained_threshold:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        axes = [axes, "dummy"]
     else:
-        fig, axes = plt.subplots(1, 1, figsize=(6, 5))
         axes = [axes]
 
     ax = axes[0]
@@ -1793,8 +1801,43 @@ def plot_dominant_modes(
     ax.set_ylabel(f"PC2 ({100 * evr[1]:.1f}%)")
     ax.set_title(f"{title}\nPC1+PC2+PC3 = {100 * cev[2]:.1f}% variance")
 
+    # Add +/- 1 std boundary for hero's path in PCA
+    if mean_scores is not None and len(state_trajectories) > 1:
+        std_scores_val = []
+        for step in range(len(mean_scores)):
+            step_states = []
+            for traj in state_trajectories:
+                # pad or skip
+                if step < len(traj):
+                    step_states.append(traj[step])
+            if step_states:
+                st_clr = clr_transform(step_states, eps=eps)
+                sc = (st_clr - pca["mean"]) @ pca["components"].T
+                std_scores_val.append(sc.std(axis=0))
+            else:
+                std_scores_val.append(np.zeros(3))
+        std_scores_val = np.array(std_scores_val)
+        
+        # Plot filled region
+        ax.fill_between(
+            mean_scores[:, 0],
+            mean_scores[:, 1] - std_scores_val[:, 1],
+            mean_scores[:, 1] + std_scores_val[:, 1],
+            color="red",
+            alpha=0.2,
+            zorder=3
+        )
+        # We can't fill_between for x easily, but we can plot upper/lower lines
+        ax.plot(mean_scores[:, 0] - std_scores_val[:, 0], mean_scores[:, 1], color="red", lw=0.5, alpha=0.5, ls="--")
+        ax.plot(mean_scores[:, 0] + std_scores_val[:, 0], mean_scores[:, 1], color="red", lw=0.5, alpha=0.5, ls="--")
+
+    fig_simplex = None
     if len(axes) > 1:
         ax2 = axes[1]
+        # Instead of ax2 in same figure, let's just create a new figure!
+        # Actually, let's just keep the code and return both, but it's easier to create a new figure
+        fig_simplex, ax2 = plt.subplots(1, 1, figsize=(6, 5))
+        
         bary = scores_to_barycentric(scores[:, :3])
         x, y = _bary_to_cart(bary[:, 0], bary[:, 1], bary[:, 2])
 
@@ -1814,7 +1857,38 @@ def plot_dominant_modes(
         if mean_scores is not None:
             mean_bary = scores_to_barycentric(mean_scores[:, :3])
             mx, my = _bary_to_cart(mean_bary[:, 0], mean_bary[:, 1], mean_bary[:, 2])
-            ax2.plot(mx, my, color="red", lw=2.0, alpha=0.9)
+            
+            if len(state_trajectories) > 1:
+                # Approximate std boundary in simplex by projecting mean +/- std
+                std_upper = mean_scores[:, :3].copy()
+                std_lower = mean_scores[:, :3].copy()
+                # we have std_scores_val computed earlier
+                std_upper[:, 1] += std_scores_val[:, 1]
+                std_lower[:, 1] -= std_scores_val[:, 1]
+                
+                bary_up = scores_to_barycentric(std_upper)
+                bary_dn = scores_to_barycentric(std_lower)
+                
+                ux, uy = _bary_to_cart(bary_up[:, 0], bary_up[:, 1], bary_up[:, 2])
+                dx, dy = _bary_to_cart(bary_dn[:, 0], bary_dn[:, 1], bary_dn[:, 2])
+                
+                ax2.fill_between(mx, dy, uy, color="red", alpha=0.2, zorder=3)
+                
+                # For x-direction std:
+                std_right = mean_scores[:, :3].copy()
+                std_left = mean_scores[:, :3].copy()
+                std_right[:, 0] += std_scores_val[:, 0]
+                std_left[:, 0] -= std_scores_val[:, 0]
+                
+                bary_r = scores_to_barycentric(std_right)
+                bary_l = scores_to_barycentric(std_left)
+                rx, ry = _bary_to_cart(bary_r[:, 0], bary_r[:, 1], bary_r[:, 2])
+                lx, ly = _bary_to_cart(bary_l[:, 0], bary_l[:, 1], bary_l[:, 2])
+                
+                ax2.plot(lx, ly, color="red", lw=0.5, alpha=0.5, ls="--")
+                ax2.plot(rx, ry, color="red", lw=0.5, alpha=0.5, ls="--")
+
+            ax2.plot(mx, my, color="red", lw=2.0, alpha=0.9, zorder=4)
             ax2.scatter(
                 mx[0],
                 my[0],
@@ -1845,7 +1919,18 @@ def plot_dominant_modes(
         ax2.set_title("Latent mode simplex")
 
     fig.tight_layout()
-    return fig, pca
+    if len(axes) > 1:
+        # We need to remove ax2 from fig if we created a new one, but actually let's just close the big fig and return two new ones? 
+        # No, just return fig, fig_simplex, pca
+        pass
+    
+    # Actually, earlier we did:
+    # fig_simplex, ax2 = plt.subplots...
+    # so we should return (fig, fig_simplex, pca) if simplex_view else (fig, pca)
+    if simplex_view and cev[2] >= explained_threshold:
+        return fig, fig_simplex, pca
+    else:
+        return fig, None, pca
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1880,3 +1965,147 @@ if __name__ == "__main__":
             title="Trained RL Policy on 4-Genotype Simplex",
         )
     plt.show()
+
+
+def plot_pop_x_metric_slices(
+    state_trajectories,
+    metric_fn,
+    metric_name,
+    num_drugs=4,
+    resolution=60,
+    x3_slices=None,
+    figsize=None,
+    is_three_state=False,
+):
+    if x3_slices is None and not is_three_state:
+        x3_slices = [
+            (0.5, 1.0),
+            (0.4, 0.5),
+            (0.3, 0.4),
+            (0.2, 0.3),
+            (0.1, 0.2),
+            (0.0, 0.1),
+        ]
+    elif is_three_state:
+        x3_slices = [(0.0, 1.0)]
+
+    n_slices = len(x3_slices)
+    if figsize is None:
+        figsize = (2.6 * n_slices + 1.5, 3.8)
+
+    fig, ax_array = plt.subplots(1, n_slices, figsize=figsize)
+    if n_slices == 1:
+        ax_array = [ax_array]
+
+    bary, x_cart, y_cart, tri_idx = _make_simplex_grid(resolution)
+
+    all_states = []
+    for episode in state_trajectories:
+        all_states.extend(episode)
+    all_states = np.array(all_states)
+
+    triangulation = Triangulation(x_cart, y_cart, tri_idx)
+    trifinder = triangulation.get_trifinder()
+
+    slice_vals = []
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        if is_three_state:
+            states_in_slice = all_states
+        else:
+            if s_idx == 0:
+                mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] <= x3_hi)
+            else:
+                mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] < x3_hi)
+            states_in_slice = all_states[mask]
+
+        vals = np.zeros(len(tri_idx), dtype=float)
+
+        if len(states_in_slice) > 0:
+            if is_three_state:
+                l0 = states_in_slice[:, 0]
+                l1 = states_in_slice[:, 1]
+                l2 = states_in_slice[:, 2]
+            else:
+                x3_mid = (x3_lo + x3_hi) / 2.0
+                S = 1.0 - x3_mid
+                if S > 0:
+                    l0 = states_in_slice[:, 0] / S
+                    l1 = states_in_slice[:, 1] / S
+                    l2 = states_in_slice[:, 2] / S
+                else:
+                    l0 = np.zeros_like(states_in_slice[:, 0])
+                    l1 = np.zeros_like(states_in_slice[:, 1])
+                    l2 = np.zeros_like(states_in_slice[:, 2])
+
+                tot = l0 + l1 + l2
+                tot[tot == 0] = 1.0
+                l0 /= tot
+                l1 /= tot
+                l2 /= tot
+
+                cx, cy = _bary_to_cart(l0, l1, l2)
+                found_tri_indices = trifinder(cx, cy)
+
+                valid_mask = found_tri_indices != -1
+                valid_idx = found_tri_indices[valid_mask]
+                valid_states = states_in_slice[valid_mask]
+
+                for i, tidx in enumerate(valid_idx):
+                    vals[tidx] += metric_fn(valid_states[i])
+
+        slice_vals.append(vals)
+
+    total_states = len(all_states) if len(all_states) > 0 else 1.0
+    global_max = (
+        max([np.max(c) for c in slice_vals]) / total_states if slice_vals else 0.0
+    )
+
+    vmin = 1e-6
+    if global_max <= vmin:
+        global_max = vmin * 10.0
+
+    cmap = mpl.colormaps["magma"]
+    norm = mcolors.LogNorm(vmin=vmin, vmax=global_max)
+
+    for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
+        ax = ax_array[s_idx]
+        vals = slice_vals[s_idx] / total_states
+        
+        colors = cmap(norm(vals))
+        colors[vals == 0, 3] = 0.0
+
+        verts = np.column_stack([x_cart, y_cart])
+        tri_verts = verts[tri_idx]
+
+        pc = PolyCollection(
+            tri_verts, facecolors=colors, edgecolors="none", linewidths=0
+        )
+        ax.add_collection(pc)
+
+        outline_x = [0, 1, 0.5, 0]
+        outline_y = [0, 0, _SQRT3_2, 0]
+        ax.plot(outline_x, outline_y, color="black", linewidth=1.2, zorder=5)
+
+        if not is_three_state:
+            ax.text(
+                0.5,
+                -0.12,
+                f"[{x3_lo:.1f}, {x3_hi:.1f}]",
+                ha="center",
+                va="top",
+                fontsize=8,
+                transform=ax.transAxes,
+            )
+
+        ax.set_xlim(-0.08, 1.08)
+        ax.set_ylim(-0.15, _SQRT3_2 + 0.15)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    fig.subplots_adjust(bottom=0.25, wspace=0.1)
+    cbar_ax = fig.add_axes([0.15, 0.12, 0.7, 0.04])
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    fig.colorbar(sm, cax=cbar_ax, orientation="horizontal", label=metric_name)
+
+    return fig
