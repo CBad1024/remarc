@@ -269,6 +269,17 @@ def main():
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=3
     )
 
+    # CREATE OUTPUT DIRECTORIES
+    base_dir = project_root / "log" / sig
+    traj_dir = base_dir / "trajectories"
+    ss_dir = base_dir / "steady_state"
+    policy_dir = base_dir / "policy_analysis"
+    disagree_dir = base_dir / "disagreement"
+    pca_dir = base_dir / "pca"
+
+    for d in [traj_dir, ss_dir, policy_dir, disagree_dir, pca_dir]:
+        d.mkdir(parents=True, exist_ok=True)
+
     # 1. Fitness Trajectories
     print("Plotting Fitness Trajectories...")
 
@@ -371,7 +382,7 @@ def main():
         plt.legend(fontsize=10, loc="center right", bbox_to_anchor=(1.25, 0.5))
         plt.tight_layout()
         plt.savefig(
-            str(project_root / "log" / f"{sig}_dashboard_trajectories{suffix}.png"),
+            str(traj_dir / f"fitness_trajectories{suffix}.png"),
             dpi=200,
             bbox_inches="tight",
         )
@@ -430,14 +441,13 @@ def main():
     )
     if len(ret_rl) == 5:
         fig_rl_pca_c, fig_rl_pca_p, fig_rl_sim_c, fig_rl_sim_p, pca_info = ret_rl
-        fig_rl_pca_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_pca_clean.png"), dpi=200, bbox_inches="tight")
-        fig_rl_pca_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_pca_paths.png"), dpi=200, bbox_inches="tight")
+        fig_rl_pca_c.savefig(str(pca_dir / "dominant_modes_remarc_pca_clean.png"), dpi=200, bbox_inches="tight")
+        fig_rl_pca_p.savefig(str(pca_dir / "dominant_modes_remarc_pca_paths.png"), dpi=200, bbox_inches="tight")
         plt.close(fig_rl_pca_c); plt.close(fig_rl_pca_p)
         if fig_rl_sim_c is not None:
-            fig_rl_sim_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_simplex_clean.png"), dpi=200, bbox_inches="tight")
-            fig_rl_sim_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_remarc_simplex_paths.png"), dpi=200, bbox_inches="tight")
+            fig_rl_sim_c.savefig(str(pca_dir / "dominant_modes_remarc_simplex_clean.png"), dpi=200, bbox_inches="tight")
+            fig_rl_sim_p.savefig(str(pca_dir / "dominant_modes_remarc_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_rl_sim_c); plt.close(fig_rl_sim_p)
-
     print("REMARC PCA Info:", pca_info)
 
     ret_gr = plot_dominant_modes(
@@ -457,14 +467,13 @@ def main():
     )
     if len(ret_gr) == 5:
         fig_gr_pca_c, fig_gr_pca_p, fig_gr_sim_c, fig_gr_sim_p, pca_info = ret_gr
-        fig_gr_pca_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_pca_clean.png"), dpi=200, bbox_inches="tight")
-        fig_gr_pca_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_pca_paths.png"), dpi=200, bbox_inches="tight")
+        fig_gr_pca_c.savefig(str(pca_dir / "dominant_modes_greedy_pca_clean.png"), dpi=200, bbox_inches="tight")
+        fig_gr_pca_p.savefig(str(pca_dir / "dominant_modes_greedy_pca_paths.png"), dpi=200, bbox_inches="tight")
         plt.close(fig_gr_pca_c); plt.close(fig_gr_pca_p)
         if fig_gr_sim_c is not None:
-            fig_gr_sim_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_simplex_clean.png"), dpi=200, bbox_inches="tight")
-            fig_gr_sim_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_greedy_simplex_paths.png"), dpi=200, bbox_inches="tight")
+            fig_gr_sim_c.savefig(str(pca_dir / "dominant_modes_greedy_simplex_clean.png"), dpi=200, bbox_inches="tight")
+            fig_gr_sim_p.savefig(str(pca_dir / "dominant_modes_greedy_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_gr_sim_c); plt.close(fig_gr_sim_p)
-
     print("Greedy PCA Info:", pca_info)
 
     ret_sh = plot_dominant_modes(
@@ -484,14 +493,13 @@ def main():
     )
     if len(ret_sh) == 5:
         fig_sh_pca_c, fig_sh_pca_p, fig_sh_sim_c, fig_sh_sim_p, pca_info = ret_sh
-        fig_sh_pca_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_pca_clean.png"), dpi=200, bbox_inches="tight")
-        fig_sh_pca_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_pca_paths.png"), dpi=200, bbox_inches="tight")
+        fig_sh_pca_c.savefig(str(pca_dir / "dominant_modes_shepherd_pca_clean.png"), dpi=200, bbox_inches="tight")
+        fig_sh_pca_p.savefig(str(pca_dir / "dominant_modes_shepherd_pca_paths.png"), dpi=200, bbox_inches="tight")
         plt.close(fig_sh_pca_c); plt.close(fig_sh_pca_p)
         if fig_sh_sim_c is not None:
-            fig_sh_sim_c.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_simplex_clean.png"), dpi=200, bbox_inches="tight")
-            fig_sh_sim_p.savefig(str(project_root / "log" / f"{sig}_dominant_modes_shepherd_simplex_paths.png"), dpi=200, bbox_inches="tight")
+            fig_sh_sim_c.savefig(str(pca_dir / "dominant_modes_shepherd_simplex_clean.png"), dpi=200, bbox_inches="tight")
+            fig_sh_sim_p.savefig(str(pca_dir / "dominant_modes_shepherd_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_sh_sim_c); plt.close(fig_sh_sim_p)
-
     if DATASET != "eight_state":
         # 2. Population distribution simplexes
         print("Plotting Population Distribution Simplexes...")
@@ -504,7 +512,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_pop_density.png"),
+                str(policy_dir / "pop_density.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -521,7 +529,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_policy.png"),
+                str(policy_dir / "policy_RL.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -536,7 +544,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_greedy_policy.png"),
+                str(policy_dir / "policy_Greedy.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -551,7 +559,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_shepherd_policy.png"),
+                str(policy_dir / "policy_SHEPHERD.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -569,7 +577,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_fitness_landscape.png"),
+                str(policy_dir / "fitness_landscape.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -587,7 +595,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_disagreement.png"),
+                str(disagree_dir / "disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -606,9 +614,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root / "log" / f"{sig}_dashboard_magnitude_disagreement.png"
-                ),
+                str(disagree_dir / "magnitude_disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -626,9 +632,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root / "log" / f"{sig}_dashboard_shepherd_disagreement.png"
-                ),
+                str(disagree_dir / "shepherd_disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -647,11 +651,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root
-                    / "log"
-                    / f"{sig}_dashboard_shepherd_magnitude_disagreement.png"
-                ),
+                str(disagree_dir / "shepherd_magnitude_disagreement.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -719,7 +719,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_steady_state_RL.png"),
+                str(ss_dir / "steady_state_RL.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -735,9 +735,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(
-                    project_root / "log" / f"{sig}_dashboard_steady_state_SHEPHERD.png"
-                ),
+                str(ss_dir / "steady_state_SHEPHERD.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -753,7 +751,7 @@ def main():
         )
         if fig is not None:
             fig.savefig(
-                str(project_root / "log" / f"{sig}_dashboard_steady_state_Greedy.png"),
+                str(ss_dir / "steady_state_Greedy.png"),
                 dpi=200,
                 bbox_inches="tight",
             )
@@ -819,7 +817,7 @@ def main():
         plt.legend(handles=handles, fontsize=10, loc="center right", bbox_to_anchor=(1.15, 0.5))
         plt.tight_layout()
         plt.savefig(
-            str(project_root / "log" / f"{sig}_dashboard_freqs_{filename_suffix}.png"),
+            str(traj_dir / f"freqs_{filename_suffix}.png"),
             dpi=200,
             bbox_inches="tight",
         )
