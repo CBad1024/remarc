@@ -53,6 +53,7 @@ def run_eval(
     all_actions = []
 
     for _ in range(num_runs):
+        print(f"Running evaluation: {agent_type} (Run {_ + 1}/{num_runs})")
         obs, _ = env.reset()
         fitnesses = []
         states = []
@@ -126,15 +127,15 @@ def main():
     EVAL_STEPS = 5000
     EVAL_RUNS = 100
     n_frames = 1
-    delta = args.delta
-    delta_horizon = args.dh
+    delta = 0.5
+    delta_horizon = 5
     gps = 10
     gamma = 0.99
     ent = 0.1
     batch = 64
-    DATASET = args.dataset  # Accepts "three_state", "four_state", or "eight_state"
-    L = args.L  # SHEPHERD horizon length
-    TRAIN = args.train  # Set to True to train the model, False to load existing model
+    DATASET = "three_state"  # Accepts "three_state", "four_state", or "eight_state"
+    L = 35  # SHEPHERD horizon length
+    TRAIN = False  # Set to True to train the model, False to load existing model
 
     sig = f"{DATASET}_dh_{delta_horizon}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
 
@@ -252,8 +253,9 @@ def main():
 
     print("Evaluating models...")
     rl_m, rl_std, rl_states, rl_actions = run_eval(eval_env, policy, "RL", EVAL_RUNS, EVAL_STEPS)
+    print("RL Eval Done. Starting Greedy Eval...")
     gr_m, gr_std, gr_states, gr_actions = run_eval(eval_env, None, "Greedy", EVAL_RUNS, EVAL_STEPS)
-    rn_m, rn_std, rn_states, rn_actions = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
+    # rn_m, rn_std, rn_states, rn_actions = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
     sh_m, sh_std, sh_states, sh_actions = run_eval(
         eval_env, shepherd_fn, "Shepherd", EVAL_RUNS, EVAL_STEPS
     )
@@ -298,14 +300,14 @@ def main():
             return arr[:max_steps] / (g_max - g_min)
 
         # Random
-        plt.plot(steps, norm(rn_m), color="gray", ls=":", lw=2, label="Random Mean")
-        plt.fill_between(
-            steps,
-            norm(rn_m) - norm_std(rn_std),
-            norm(rn_m) + norm_std(rn_std),
-            color="gray",
-            alpha=0.1,
-        )
+        # plt.plot(steps, norm(rn_m), color="gray", ls=":", lw=2, label="Random Mean")
+        # plt.fill_between(
+        #     steps,
+        #     norm(rn_m) - norm_std(rn_std),
+        #     norm(rn_m) + norm_std(rn_std),
+        #     color="gray",
+        #     alpha=0.1,
+        # )
 
         # Greedy
         plt.plot(
@@ -450,6 +452,8 @@ def main():
             fig_rl_sim_p.savefig(str(pca_dir / "dominant_modes_remarc_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_rl_sim_c); plt.close(fig_rl_sim_p)
     print("REMARC PCA Info:", pca_info)
+    with open(pca_dir / "pca_components.txt", "a") as f:
+        f.write(f"REMARC PCA Info:\n{pca_info}\n\n")
 
     ret_gr = plot_dominant_modes(
         state_trajectories=gr_states,
@@ -476,6 +480,8 @@ def main():
             fig_gr_sim_p.savefig(str(pca_dir / "dominant_modes_greedy_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_gr_sim_c); plt.close(fig_gr_sim_p)
     print("Greedy PCA Info:", pca_info)
+    with open(pca_dir / "pca_components.txt", "a") as f:
+        f.write(f"Greedy PCA Info:\n{pca_info}\n\n")
 
     ret_sh = plot_dominant_modes(
         state_trajectories=sh_states,
@@ -501,6 +507,9 @@ def main():
             fig_sh_sim_c.savefig(str(pca_dir / "dominant_modes_shepherd_simplex_clean.png"), dpi=200, bbox_inches="tight")
             fig_sh_sim_p.savefig(str(pca_dir / "dominant_modes_shepherd_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_sh_sim_c); plt.close(fig_sh_sim_p)
+    print("SHEPHERD PCA Info:", pca_info)
+    with open(pca_dir / "pca_components.txt", "a") as f:
+        f.write(f"SHEPHERD PCA Info:\n{pca_info}\n\n")
     if DATASET != "eight_state":
         # 2. Population distribution simplexes
         print("Plotting Population Distribution Simplexes...")
