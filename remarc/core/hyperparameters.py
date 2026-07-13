@@ -16,8 +16,17 @@ class Presets:
     reward_clip: bool = False
     gen_per_step: int = 500
     ent_coef: float = 0.05
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    delta_multiplier: float = 0.0
     episode_steps: int = 20
     reward_scale: float = 100.0
+    random_start: bool = True
+    landscape_amplification: float = 1.0
+    stochastic: bool = True
+    n_frames: int = 1
+    delta_horizon: int = 1
+    
 
     @staticmethod
     def p1_ss():
@@ -26,7 +35,7 @@ class Presets:
             num_actions=15,
             lr=0.0001,
             epochs=50,
-            train_steps_per_epoch=1000,
+            train_steps_per_epoch=4000,
             test_episodes=10,
             batch_size=128,
             buffer_size=20000,
@@ -35,7 +44,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -54,7 +64,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -64,7 +75,7 @@ class Presets:
             num_actions=15,
             lr=0.0001,
             epochs=50,
-            train_steps_per_epoch=1000,
+            train_steps_per_epoch=4000,
             test_episodes=10,
             batch_size=128,
             buffer_size=20000,
@@ -73,7 +84,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -83,7 +95,7 @@ class Presets:
             num_actions=15,
             lr=1e-4,
             epochs=200,
-            train_steps_per_epoch=2000,
+            train_steps_per_epoch=8000,
             test_episodes=10,
             batch_size=128,
             buffer_size=50000,
@@ -92,7 +104,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=100.0
+            reward_scale=100.0,
+            random_start=True
         )
 
     @staticmethod
@@ -111,7 +124,8 @@ class Presets:
             reward_clip=False,
             ent_coef=0.05,
             episode_steps=20,
-            reward_scale=1.0
+            reward_scale=1.0,
+            random_start=True
         )
 
     @staticmethod
@@ -121,7 +135,7 @@ class Presets:
             num_actions=4,
             lr=0.0001,
             epochs=50,
-            train_steps_per_epoch=1000,
+            train_steps_per_epoch=4000,
             test_episodes=10,
             batch_size=128,
             buffer_size=20000,
@@ -129,6 +143,69 @@ class Presets:
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
-            episode_steps=20,
-            reward_scale=100.0
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True
+        )
+
+    @staticmethod
+    def p_four_state_stacked():
+        return Presets(
+            state_shape=(12,),
+            num_actions=4,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=4000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="four_state",
+            activation="relu",
+            reward_clip=False,
+            ent_coef=0.05,
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True,
+            n_frames=3
+        )
+
+    @staticmethod
+    def p_three_state_ls():
+        return Presets(
+            state_shape=(3,),
+            num_actions=4,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=4000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="three_state",
+            activation="relu",
+            reward_clip=False,
+            ent_coef=0.05,
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True
+        )
+
+    @staticmethod
+    def p_three_state_stacked():
+        return Presets(
+            state_shape=(9,),
+            num_actions=4,
+            lr=0.0001,
+            epochs=50,
+            train_steps_per_epoch=4000,
+            test_episodes=10,
+            batch_size=128,
+            buffer_size=20000,
+            dataset="three_state",
+            activation="relu",
+            reward_clip=False,
+            ent_coef=0.05,
+            episode_steps=100,
+            reward_scale=100.0,
+            random_start=True,
+            n_frames=3
         )

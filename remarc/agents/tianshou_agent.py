@@ -1,12 +1,15 @@
+import dataclasses
+import datetime
 import json
 import os
 import pickle
 from pathlib import Path
 
 import numpy as np
+import optuna
 import torch
 import torch.nn as nn
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import Collector, VectorReplayBuffer, Batch
 from tianshou.env import DummyVectorEnv, VectorEnvWrapper
 from tianshou.policy import PPOPolicy, BasePolicy
 from tianshou.trainer import OnpolicyTrainer
@@ -18,7 +21,7 @@ from torch.optim import Adam
 from torch.utils.tensorboard import SummaryWriter
 
 from ..core.hyperparameters import Presets as P
-from ..envs import WrightFisherEnv
+from ..envs import WrightFisherEnv, ThreeGenotypeEnv
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +80,7 @@ metrics_path = os.path.join(PROJECT_ROOT, "log", "metrics")
 os.makedirs(log_path, exist_ok=True)
 os.makedirs(metrics_path, exist_ok=True)
 
-writer = SummaryWriter(log_path)
-logger = TensorboardLogger(writer)
+
 
 
 class MetricsLogger:
@@ -160,7 +162,7 @@ class LossCapturingLogger(BaseLogger):
 # Policy snapshot logging
 # ---------------------------------------------------------------------------
 
-def log_policy_snapshot(signature: str, policy, n_states: int):
+def log_policy_snapshot(signature: str, policy, n_states: int, n_frames: int = 1):
     """Serialize current policy Q-values / action logits to a JSON file for the dashboard."""
     if not signature:
         return
@@ -169,7 +171,9 @@ def log_policy_snapshot(signature: str, policy, n_states: int):
     os.makedirs(log_dir, exist_ok=True)
     filename = os.path.join(log_dir, f"{signature}_live.json")
 
-    state_tensor = torch.FloatTensor(np.identity(n_states))
+    identity_states = np.identity(n_states)
+    stacked_states = np.tile(identity_states, (1, n_frames))
+    state_tensor = torch.FloatTensor(stacked_states)
 
     with torch.no_grad():
         if hasattr(policy, "actor"):  # PPO
@@ -198,87 +202,223 @@ def load_testing_envs():
 
 
 def load_best_policy(p: P, filename: str = "best_policy.pth", env_type: str = "wf", ppo: bool = True):
-    test_envs_list = load_testing_envs()
-    test_envs = DummyVectorEnv([lambda e=e: e for e in test_envs_list])
+    # Build a fresh environment from Presets rather than relying on
+    # testing_envs.pkl, which is overwritten by every training run and
+    # may have a different obs_shape than the checkpoint being loaded.
+    import math
+    n_frames = getattr(p, "n_frames", 1)
+    seq_length = int(math.log2(p.state_shape[0] // n_frames))
+    env = WrightFisherEnv(seq_length=seq_length, num_drugs=p.num_actions, n_frames=n_frames)
+    test_envs = DummyVectorEnv([lambda: env])
     policy = get_ppo_policy(p, test_envs).eval()
     policy = load_best_fn(policy, filename)
+    
+    # Force policy to CPU for sequential evaluation. 
+    # Batch size 1 on GPU incurs massive memory transfer latency!
+    if hasattr(policy, "to"):
+        policy.to("cpu")
+    if hasattr(policy, "device"):
+        policy.device = "cpu"
+        
     return policy
 
 
-def load_random_policy(p: P):
-    """Return a freshly initialised (untrained) PPO policy on WF landscapes.
+class RandomPolicy:
+    """Trivial policy that samples actions uniformly at random.
 
-    Note: This returns an *untrained* policy whose actions are effectively random.
-    Used as a random-policy baseline for evaluation.
+    Conforms to the Tianshou ``policy(batch).act`` interface so it can be
+    used as a drop-in replacement in ``run_sim_tianshou``.
     """
-    test_envs_list = load_testing_envs()
-    test_envs = DummyVectorEnv([lambda e=e: e for e in test_envs_list])
-    return get_ppo_policy(p, test_envs)
+
+    def __init__(self, num_actions: int):
+        self.num_actions = num_actions
+
+    def __call__(self, batch, **kwargs):
+        n = len(batch.obs)
+        acts = np.array([np.random.randint(self.num_actions) for _ in range(n)])
+        return Batch(act=acts)
+
+    def eval(self):
+        return self
+
+class SingleDrugPolicy:
+    """
+        Policy that always selects a single drug. Wrapper for testing environments.
+    """
+    def __init__(self, drug_idx: int):
+        self.drug_idx = drug_idx
+    def __call__(self, batch, **kwargs):
+        n = len(batch.obs)
+        acts = np.array([self.drug_idx for _ in range(n)])
+        return Batch(act=acts)
+    def eval(self):
+        return self
+
+
+def load_random_policy(p: P):
+    """Return a RandomPolicy that samples uniformly from the action space."""
+    return RandomPolicy(num_actions=p.num_actions)
 
 
 # ---------------------------------------------------------------------------
 # Training — Wright-Fisher Landscapes
 # ---------------------------------------------------------------------------
 
-def train_wf_landscapes(p: P, signature: str | None = None):
-    v_N = int(np.log2(p.state_shape[0]))
+def save_run_params(p: P, signature: str | None):
+    """Persist the full parameter set for this run to a JSON file.
+
+    Saved to ``log/params/<signature>_params.json`` (or a timestamped
+    fallback when no signature is provided).  Called at the very start
+    of training so the config is recorded even if the run crashes.
+    """
+    params_dir = os.path.join(PROJECT_ROOT, "log", "params")
+    os.makedirs(params_dir, exist_ok=True)
+
+    ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    label = signature if signature else f"run_{ts}"
+    filename = os.path.join(params_dir, f"{label}_params.json")
+
+    payload = dataclasses.asdict(p)
+    # Convert tuples (e.g. state_shape) to lists for JSON compatibility
+    for k, v in payload.items():
+        if isinstance(v, tuple):
+            payload[k] = list(v)
+    payload["signature"] = signature
+    payload["timestamp"] = ts
+
+    with open(filename, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"Run parameters saved to: {filename}")
+
+
+def train_wf_landscapes(p: P, signature: str | None = None, trial: "optuna.Trial | None" = None, seed: int | None = None):
+    # --- Save params before anything else ---
+    save_run_params(p, signature)
+    
+    if seed is not None:
+        import random
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+
+    n_frames = getattr(p, "n_frames", 1)
+    v_N = int(np.log2(p.state_shape[0] // n_frames))
 
     from ..core.landscapes import Landscape
 
     landscape_list = []
+    is_three_state = False
 
-    if hasattr(p, "dataset") and p.dataset == "chen":
+    if hasattr(p, "dataset") and p.dataset == "eight_state":
         from remarc.envs import define_chen_landscapes
-        print("Using Chen landscapes for Wright-Fisher training.")
+        print("Using Eight-State landscapes for Wright-Fisher training (raw fitness, no normalization).")
         v_N = 3
         chen_data = define_chen_landscapes()
         num_drugs = len(chen_data)
 
         g_min, g_max = np.min(chen_data), np.max(chen_data)
-        chen_data_norm = (chen_data - g_min) / (g_max - g_min)
-        print(f"Chen Data Normalised: Min={g_min:.4f}, Max={g_max:.4f}")
+        print(f"Chen Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
 
         for i in range(num_drugs):
-            landscape_list.append(Landscape(v_N, sigma=0.0, ls=chen_data_norm[i], g_min=g_min, g_max=g_max))
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=chen_data[i], g_min=g_min, g_max=g_max))
 
     elif hasattr(p, "dataset") and p.dataset == "four_state":
         from remarc.envs import define_four_state_landscapes
-        print("Using Four-State landscapes for Wright-Fisher training.")
+        amp = getattr(p, "landscape_amplification", 1.0)
+        print(f"Using Four-State landscapes for Wright-Fisher training (amplification={amp:.1f}).")
         v_N = 2
-        four_state_data = define_four_state_landscapes()
+        four_state_data = define_four_state_landscapes(amplification=amp)
         num_drugs = len(four_state_data)
 
         g_min, g_max = np.min(four_state_data), np.max(four_state_data)
-        four_state_data_norm = (four_state_data - g_min) / (g_max - g_min)
-        print(f"Four-State Data Normalised: Min={g_min:.4f}, Max={g_max:.4f}")
+        print(f"Four-State Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
 
         for i in range(num_drugs):
-            landscape_list.append(Landscape(v_N, sigma=0.0, ls=four_state_data_norm[i], g_min=g_min, g_max=g_max))
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=four_state_data[i], g_min=g_min, g_max=g_max))
+
+    elif hasattr(p, "dataset") and p.dataset == "trap":
+        from remarc.envs import define_trap_landscapes
+        amp = getattr(p, "landscape_amplification", 1.0)
+        print(f"Using Trap landscapes for Wright-Fisher training (amplification={amp:.1f}).")
+        v_N = 2
+        trap_data = define_trap_landscapes(amplification=amp)
+        num_drugs = len(trap_data)
+
+        g_min, g_max = np.min(trap_data), np.max(trap_data)
+        print(f"Trap Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
+
+        for i in range(num_drugs):
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=trap_data[i], g_min=g_min, g_max=g_max))
+
+    elif hasattr(p, "dataset") and (p.dataset == "three_state" or p.dataset == "Three State"):
+        from remarc.envs import define_three_state_landscapes
+        amp = getattr(p, "landscape_amplification", 1.0)
+        print(f"Using Three-State landscapes for training (amplification={amp:.1f}).")
+        v_N = 2
+        three_state_data = define_three_state_landscapes(amplification=amp)
+        num_drugs = len(three_state_data)
+
+        g_min, g_max = np.min(three_state_data), np.max(three_state_data)
+        print(f"Three-State Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max-g_min:.4f}")
+
+        for i in range(num_drugs):
+            landscape_list.append(Landscape(v_N, sigma=0.0, ls=three_state_data[i], g_min=g_min, g_max=g_max))
+        
+        is_three_state = True
 
     else:
         print("Using synthetic random landscapes for Wright-Fisher training.")
         num_drugs = 10
         landscape_list = [Landscape(v_N, sigma=0.5) for _ in range(num_drugs)]
+        is_three_state = False
 
     # Save shared landscapes so train.py evaluation uses the same data
-    print("Saving landscapes to active_landscapes.pkl")
-    with open(os.path.join(log_path, "active_landscapes.pkl"), "wb") as f:
+    ls_filename = f"active_landscapes_{signature}.pkl" if signature else "active_landscapes.pkl"
+    print(f"Saving landscapes to {ls_filename}")
+    with open(os.path.join(log_path, ls_filename), "wb") as f:
         pickle.dump(landscape_list, f)
 
     print(f"Number of drugs: {len(landscape_list)}")
-    train_envs, test_envs = WrightFisherEnv.getEnv(
-        4, 2,
+    
+    EnvClass = ThreeGenotypeEnv if is_three_state else WrightFisherEnv
+    
+    train_envs, test_envs = EnvClass.get_env(
+        getattr(p, "n_train_envs", 4), getattr(p, "n_test_envs", 2),
         landscape_list=landscape_list,
         gen_per_step=getattr(p, "gen_per_step", 500),
         seq_length=v_N,
-        random_start=True,
+        random_start=getattr(p, "random_start", True),
         episode_steps=getattr(p, "episode_steps", 20),
         reward_scale=getattr(p, "reward_scale", 100.0),
+        stochastic=getattr(p, "stochastic", True),
+        delta_multiplier=getattr(p, "delta_multiplier", 0.0),
+        mutation_rate=getattr(p, "mutation_rate", 1e-4),
+        n_frames=n_frames,
+        delta_horizon=getattr(p, "delta_horizon", 1),
     )
 
     print("Saving testing environments to testing_envs.pkl")
+    total_gens = getattr(p, "gen_per_step", 500) * getattr(p, "episode_steps", 20)
+    
+    env_kwargs = dict(
+        landscape_list=landscape_list, 
+        num_drugs=len(landscape_list),
+        gen_per_step=getattr(p, "gen_per_step", 500),
+        seq_length=v_N,
+        random_start=False, 
+        total_generations=total_gens,
+        reward_scale=getattr(p, "reward_scale", 100.0), 
+        stochastic=getattr(p, "stochastic", True),
+        delta_multiplier=getattr(p, "delta_multiplier", 0.0),
+        mutation_rate=getattr(p, "mutation_rate", 1e-4),
+        n_frames=n_frames,
+        delta_horizon=getattr(p, "delta_horizon", 1),
+    )
+    
+    test_env_instances = [EnvClass(**env_kwargs) for _ in range(2)]
+    
     with open(os.path.join(log_path, "testing_envs.pkl"), "wb") as f:
-        pickle.dump([getattr(worker, 'env') for worker in train_envs.workers], f)
+        pickle.dump(test_env_instances, f)
 
     if getattr(p, "reward_clip", False):
         print("Enable reward clipping (WF)")
@@ -293,7 +433,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         torch.save(policy.state_dict(), os.path.join(log_path, filename))
         print(f"Best policy saved to: {os.path.join(log_path, filename)}")
 
-    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, 4))
+    train_collector = Collector(policy, train_envs, VectorReplayBuffer(p.buffer_size, len(train_envs)))
     test_collector = Collector(policy, test_envs)
 
     # Warm-up collection before training begins
@@ -308,23 +448,36 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     def test_fn(epoch, env_step):
         if test_collector:
-            stats = test_collector.collect(n_episode=p.test_episodes)
+            # Limit training evaluation to 5 episodes to prevent massive slowdowns
+            # when the dashboard passes test_episodes=100 for final evaluation.
+            eval_eps = min(getattr(p, "test_episodes", 10), 5)
+            stats = test_collector.collect(n_episode=eval_eps)
             if stats.returns_stat:
                 metrics_logger.log(epoch, stats.returns_stat.mean, stats.returns_stat.std, last_loss[0])
-            log_policy_snapshot(sig, policy, 2**v_N)
+            state_dim = 3 if is_three_state else (2**v_N)
+            log_policy_snapshot(sig, policy, state_dim, n_frames)
+            
+            if trial is not None:
+                norm_reward = stats.returns_stat.mean / getattr(p, "reward_scale", 1.0)
+                trial.report(norm_reward, epoch)
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
 
     def train_fn(epoch, env_step):
-        # Decay entropy more aggressively
-        if epoch < p.epochs * 0.2:
+        # Delay entropy decay so agent explores longer
+        if epoch < p.epochs * 0.4:
             current_ent_coef = getattr(p, "ent_coef", 0.05)
         else:
-            # Drop to 0.01 by 60% of training
-            decay_steps = p.epochs * 0.4
-            current_ent_coef = max(policy.ent_coef - (getattr(p, "ent_coef", 0.05) - 0.01) / decay_steps, 0.01)
+            # Drop to 0.0 so the network becomes fully deterministic in final epochs
+            decay_steps = p.epochs * 0.5
+            current_ent_coef = max(policy.ent_coef - getattr(p, "ent_coef", 0.05) / decay_steps, 0.0)
         policy.ent_coef = current_ent_coef
 
+    tb_log_path = os.path.join(PROJECT_ROOT, "log", "tensorboard", sig)
+    os.makedirs(tb_log_path, exist_ok=True)
+    writer = SummaryWriter(tb_log_path)
+    logger = TensorboardLogger(writer)
     wrapped_logger = LossCapturingLogger(logger, last_loss)
-
     drug_trainer = OnpolicyTrainer(
         policy=policy,
         max_epoch=p.epochs,
@@ -333,7 +486,7 @@ def train_wf_landscapes(p: P, signature: str | None = None):
         test_collector=test_collector,
         step_per_epoch=p.train_steps_per_epoch,
         repeat_per_collect=8,  # Recommended value for PPO
-        episode_per_test=p.test_episodes,
+        episode_per_test=min(getattr(p, "test_episodes", 10), 5),
         step_per_collect=p.train_steps_per_epoch,
         train_fn=train_fn,
         test_fn=test_fn,
@@ -347,6 +500,27 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 
     test_result = test_collector.collect(n_episode=p.test_episodes)
     print(f"Final testing result: {test_result}")
+    
+    # Log hyperparameters and final performance
+    hparams = {}
+    for k, v in dataclasses.asdict(p).items():
+        if isinstance(v, (int, float, str, bool)):
+            hparams[k] = v
+        elif v is None:
+            hparams[k] = "None"
+        else:
+            hparams[k] = str(v)
+            
+    writer.add_hparams(
+        hparam_dict=hparams,
+        metric_dict={
+            "test_reward": test_result.returns_stat.mean,
+            "test_length": test_result.lens_stat.mean
+        }
+    )
+    
+    final_norm_reward = test_result.returns_stat.mean / getattr(p, "reward_scale", 1.0)
+    return final_norm_reward
 
 
 # ---------------------------------------------------------------------------
@@ -354,27 +528,30 @@ def train_wf_landscapes(p: P, signature: str | None = None):
 # ---------------------------------------------------------------------------
 
 def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPolicy:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     activation = get_activation(p.activation)
 
     obs_shape = train_envs.get_env_attr("observation_space")[0].shape
     action_shape = train_envs.get_env_attr("action_space")[0].n
 
+    hidden_sizes = getattr(p, "hidden_sizes", [256, 256, 256])
+    head_sizes = getattr(p, "head_sizes", [128])
+
     net = Net(
         state_shape=obs_shape,
-        hidden_sizes=[128, 128],
+        hidden_sizes=hidden_sizes,
         activation=activation,
         device=device,
     )
     actor = Actor(
         preprocess_net=net,
         action_shape=action_shape,
-        hidden_sizes=[256, 256, 256],
+        hidden_sizes=head_sizes,
         device=device,
     ).to(device)
     critic = Critic(
         preprocess_net=net,
-        hidden_sizes=[256, 256, 256],
+        hidden_sizes=head_sizes,
         device=device,
     ).to(device)
 
@@ -386,16 +563,16 @@ def get_ppo_policy(p: P, train_envs: DummyVectorEnv | VectorEnvWrapper) -> PPOPo
         optim=optim,
         dist_fn=torch.distributions.Categorical,
         action_space=train_envs.get_env_attr("action_space")[0],
-        discount_factor=0.99,
+        discount_factor=getattr(p, "gamma", 0.99),
         max_grad_norm=0.5,
         vf_coef=0.5,
         ent_coef=getattr(p, "ent_coef", 0.05),
-        gae_lambda=0.95,
+        gae_lambda=getattr(p, "gae_lambda", 0.95),
         reward_normalization=True,
         action_scaling=False,
         deterministic_eval=True,
         dual_clip=None,
-        value_clip=True,
+        value_clip=False,
         eps_clip=0.2,
         advantage_normalization=True,
         recompute_advantage=False,

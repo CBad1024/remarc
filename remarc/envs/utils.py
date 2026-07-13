@@ -70,10 +70,20 @@ def fast_choice(options, probs):
             return options[i]
     return options[-1]
 
-def define_chen_landscapes(as_dict=False):
+def define_chen_landscapes(as_dict=False, center_at_zero=False) -> np.ndarray :
     """
     Chen et al. fitness landscapes for 8 genotypes (N=3) and 4 drugs.
     Source: Chen et al. evolutionary dynamics paper
+
+    Parameters
+    ----------
+    as_dict : bool
+        If True, return a dict keyed by drug name instead of a list.
+    center_at_zero : bool
+        If True, subtract 1.0 from all fitness values so the landscape is
+        centered around 0 instead of 1.  This amplifies the signal-to-noise
+        ratio for RL reward calculations while preserving the relative
+        fitness differences that drive selection.
     """
     if as_dict:
         drugs = {}
@@ -87,25 +97,81 @@ def define_chen_landscapes(as_dict=False):
         drugs.append([0.995, 1.005, 1.002, 0.999, 1.005, 0.994, 0.999, 1.001])
         drugs.append([0.997, 1.001, 0.989, 1.003, 1.003, 0.998, 1.010, 0.997])
         drugs.append([1.005, 0.988, 0.999, 1.001, 0.995, 1.011, 1.000, 0.999])
-    return np.array(drugs)
+    result = np.array(drugs)
+    if center_at_zero:
+        result = result - 1.0
+    return result
 
-def define_four_state_landscapes(as_dict=False):
+def define_four_state_landscapes(as_dict=False, amplification=1.0):
     """
     Four-state fitness landscapes for 4 genotypes (N=2) and 4 drugs.
+    
+    Args:
+        as_dict: If True, return as dict with drug names as keys.
+        amplification: Scale fitness deviations from the mean. Values > 1.0
+            increase selection pressure (e.g. 10.0 turns ~1% differences
+            into ~10% differences). Default 1.0 = raw values.
     """
+    raw = np.array([
+        [0.993, 0.998, 1.009, 1.003],
+        [1.005, 0.988, 0.999, 1.001],
+        [0.997, 1.001, 0.989, 1.003],
+        [0.995, 1.005, 1.002, 0.999],
+    ])
+    
+    if amplification != 1.0:
+        mean = raw.mean()
+        raw = mean + (raw - mean) * amplification
+    
     if as_dict:
-        drugs = {}
-        drugs['Drug_A'] = [0.993, 0.998, 1.009, 1.003]
-        drugs['Drug_B'] = [1.005, 0.988, 0.999, 1.001]
-        drugs['Drug_C'] = [0.997, 1.001, 0.989, 1.003]
-        drugs['Drug_D'] = [0.995, 1.005, 1.002, 0.999]
-    else:
-        drugs = []
-        drugs.append([0.993, 0.998, 1.009, 1.003])
-        drugs.append([1.005, 0.988, 0.999, 1.001])
-        drugs.append([0.997, 1.001, 0.989, 1.003])
-        drugs.append([0.995, 1.005, 1.002, 0.999])
-    return np.array(drugs)
+        drug_names = ['Drug_A', 'Drug_B', 'Drug_C', 'Drug_D']
+        return {name: list(row) for name, row in zip(drug_names, raw)}
+    return raw
+
+def define_three_state_landscapes(as_dict=False, amplification=1.0):
+    """
+    Three-state fitness landscapes for 3 genotypes and 4 drugs.
+    
+    Args:
+        as_dict: If True, return as dict with drug names as keys.
+        amplification: Scale fitness deviations from the mean.
+    """
+    raw = np.array([
+        [0.994, 0.997, 1.009], # Drug A
+        [1.000, 0.991, 1.008], # Drug B
+        [0.999, 1.003, 0.994], # Drug C
+        [0.993, 1.005, 1.002], # Drug D
+    ])
+    
+    if amplification != 1.0:
+        mean = raw.mean()
+        raw = mean + (raw - mean) * amplification
+    
+    if as_dict:
+        drug_names = ['Drug_A', 'Drug_B', 'Drug_C', 'Drug_D']
+        return {name: list(row) for name, row in zip(drug_names, raw)}
+    return raw
+
+def define_trap_landscapes(as_dict=False, amplification=1.0):
+    """
+    Trap fitness landscapes for 4 genotypes (N=2) and 4 drugs.
+    Scaled similarly to four-state around ~1.0 with ~0.015 deviations.
+    """
+    raw = np.array([
+        [0.991, 1.005, 0.998, 1.008], # Drug 0 (Greedy Trap)
+        [1.002, 0.992, 1.005, 1.009], # Drug 1 
+        [0.998, 0.995, 1.002, 1.008], # Drug 2 (RL Setup)
+        [1.005, 1.006, 0.991, 1.008], # Drug 3 (RL Finisher)
+    ])
+    
+    if amplification != 1.0:
+        mean = raw.mean()
+        raw = mean + (raw - mean) * amplification
+    
+    if as_dict:
+        drug_names = ['Drug_A', 'Drug_B', 'Drug_C', 'Drug_D']
+        return {name: list(row) for name, row in zip(drug_names, raw)}
+    return raw
 
 def define_successful_landscapes():
     return np.array([[1.20506869, 3.35382954, 0.32273345, 0.29391833],
