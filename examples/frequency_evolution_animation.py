@@ -14,7 +14,7 @@ Each mode shows:
   - Animated Scatter3d markers sized by √(genotype frequency)
   - Fitness-over-time subplot with drug-coloured bands and animated cursor
 
-Output: wf_tumor_evolution_chen.html  (fully interactive, pausable in-browser)
+Output: wf_tumor_evolution_eight_state.html  (fully interactive, pausable in-browser)
 """
 
 import sys
@@ -30,7 +30,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from remarc.envs import WrightFisherEnv
-from remarc.envs.utils import define_chen_landscapes
+from remarc.envs.utils import define_eight_state_landscapes
 from remarc.core.landscapes import Landscape
 from remarc.core.hyperparameters import Presets
 from tianshou.data import Batch
@@ -510,8 +510,8 @@ def _build_fig2d(
 
 def create_frequency_gif(
     episode_steps: int = 75,
-    policy_filename: str = "best_policy_chen.pth",
-    output_filename: str = "wf_tumor_evolution_chen.html",
+    policy_filename: str = "best_policy_eight_state.pth",
+    output_filename: str = "wf_tumor_evolution_eight_state.html",
     pop_size: int = 10_000,
     gen_per_step: int = 500,
 ):
@@ -520,7 +520,7 @@ def create_frequency_gif(
     single interactive HTML with a toggle to switch between them.
     """
     print("Setting up Chen et al. landscapes...")
-    ls = define_chen_landscapes()  # (4, 8)
+    ls = define_eight_state_landscapes()  # (4, 8)
     v_N = 3
     landscape_list = [Landscape(v_N, sigma=0.0, ls=ls[i]) for i in range(len(ls))]
     total_gens = gen_per_step * (episode_steps + 2)
@@ -548,7 +548,7 @@ def create_frequency_gif(
 
     p_base = Presets.p1_ls()
     p = replace(
-        p_base, state_shape=(NUM_GENOTYPES,), num_actions=NUM_DRUGS, dataset="chen"
+        p_base, state_shape=(NUM_GENOTYPES,), num_actions=NUM_DRUGS, dataset="eight_state"
     )
     import torch as _torch
 
@@ -866,8 +866,8 @@ if __name__ == "__main__":
         description="Generate Chen tumor evolution animation"
     )
     parser.add_argument("--steps", type=int, default=100)
-    parser.add_argument("--policy", type=str, default="best_policy_chen.pth")
-    parser.add_argument("--output", type=str, default="wf_tumor_evolution_chen.html")
+    parser.add_argument("--policy", type=str, default="best_policy_eight_state.pth")
+    parser.add_argument("--output", type=str, default="wf_tumor_evolution_eight_state.html")
     parser.add_argument("--pop-size", type=int, default=10000)
     parser.add_argument("--gen-per-step", type=int, default=50)
     args = parser.parse_args()

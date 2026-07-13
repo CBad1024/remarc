@@ -26,7 +26,7 @@ import pickle
 from remarc.envs import (
     WrightFisherEnv,
     ThreeGenotypeEnv,
-    define_chen_landscapes,
+    define_eight_state_landscapes,
     define_four_state_landscapes,
     define_three_state_landscapes,
 )
@@ -63,7 +63,7 @@ builtins.print = print
 
 
 def evaluate_best_single_drug(
-    landscape: np.ndarray = define_chen_landscapes(),
+    landscape: np.ndarray = define_eight_state_landscapes(),
     num_episodes: int = 20,
     seq_length: int = 3,
     episode_length: int = 20,
@@ -297,8 +297,8 @@ def run_wright_fisher(
 
     # Determine correct action space size and state shape based on dataset
     v_dataset = hp_args.dataset if hp_args else p_base.dataset
-    if v_dataset == "chen":
-        v_num_drugs = len(define_chen_landscapes())
+    if v_dataset == "eight_state":
+        v_num_drugs = len(define_eight_state_landscapes())
         v_N = 3
     elif v_dataset == "four_state":
         amp = getattr(hp_args, "landscape_amplification", 1.0) if hp_args else 1.0
@@ -333,7 +333,7 @@ def run_wright_fisher(
             buffer_size=p_base.buffer_size,
             activation=hp_args.activation or p_base.activation,
             reward_clip=hp_args.reward_clip,
-            dataset=hp_args.dataset if hp_args else "chen",
+            dataset=hp_args.dataset if hp_args else "eight_state",
             gen_per_step=hp_args.gen_per_step if hp_args else 500,
             ent_coef=hp_args.ent_coef,
             gamma=hp_args.gamma
@@ -398,8 +398,8 @@ def run_wright_fisher(
 
     if active_landscapes is None:
         print("Warning: No pickled landscapes found. Using raw dataset initialization.")
-        if v_dataset == "chen":
-            ls = define_chen_landscapes()
+        if v_dataset == "eight_state":
+            ls = define_eight_state_landscapes()
         elif v_dataset == "four_state":
             amp = getattr(hp_args, "landscape_amplification", 1.0) if hp_args else 1.0
             ls = define_four_state_landscapes(amplification=amp)
@@ -950,9 +950,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="chen",
-        choices=["chen", "four_state", "three_state", "synthetic"],
-        help="Dataset to use (chen, four_state, three_state, or synthetic)",
+        default="eight_state",
+        choices=["eight_state", "four_state", "three_state", "synthetic"],
+        help="Dataset to use (eight_state, four_state, three_state, or synthetic)",
     )
     parser.add_argument(
         "--ent-coef",

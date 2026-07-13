@@ -39,7 +39,7 @@ with col1:
             "Select Trained Policy (.pth)",
             ["--- Custom Path ---"] + pth_files,
             index=1
-            if "best_policy_chen_40gps_100st_1000rewsc_64b_100ep_e-3MR.pth" in pth_files
+            if "best_policy_eight_state_40gps_100st_1000rewsc_64b_100ep_e-3MR.pth" in pth_files
             else 0,
         )
         if selected_from_list != "--- Custom Path ---":
@@ -47,7 +47,7 @@ with col1:
 
     custom_policy = st.text_input(
         "Or enter Custom/Absolute Policy Path",
-        value="" if policy_choice else "best_policy_chen.pth",
+        value="" if policy_choice else "best_policy_eight_state.pth",
         help="Full absolute path or name of the policy file",
     )
 
@@ -82,7 +82,7 @@ if run_btn and chosen_policy:
 
     st.info(f"Simulating using policy: `{final_policy_path}`...")
 
-    output_html_name = "wf_tumor_evolution_chen.html"
+    output_html_name = "wf_tumor_evolution_eight_state.html"
     output_path = _project_root / output_html_name
 
     try:
@@ -99,7 +99,7 @@ if run_btn and chosen_policy:
         st.error(f"Error during simulation: {e}")
 
 # Display HTML if it exists
-output_html_path = _project_root / "wf_tumor_evolution_chen.html"
+output_html_path = _project_root / "wf_tumor_evolution_eight_state.html"
 if output_html_path.exists():
     with open(output_html_path, "r", encoding="utf-8") as f:
         html_content = f.read()

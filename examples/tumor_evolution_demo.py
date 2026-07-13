@@ -9,7 +9,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from remarc.envs import WrightFisherEnv
-from remarc.envs.utils import define_chen_landscapes
+from remarc.envs.utils import define_eight_state_landscapes
 from remarc.core.landscapes import Landscape
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ st.markdown(
 
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
-    st.session_state.ls = define_chen_landscapes()
+    st.session_state.ls = define_eight_state_landscapes()
     v_N = 3
     landscape_list = [
         Landscape(v_N, sigma=0.0, ls=st.session_state.ls[i])

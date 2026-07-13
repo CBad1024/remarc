@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import json
 from remarc.envs import (
-    define_chen_landscapes,
+    define_eight_state_landscapes,
     define_four_state_landscapes,
     define_three_state_landscapes,
 )
@@ -57,7 +57,7 @@ DATASET_OPTIONS = {
     "Chen et al.": {
         "N": 3,
         "description": "Empirical fitness landscapes from Chen et al.",
-        "cli": "chen",
+        "cli": "eight_state",
     },
     "Four-State": {
         "N": 2,
@@ -231,7 +231,7 @@ def start_simulation(tab_id):
         elif "threestate" in sig_lower:
             sim["hp"]["dataset"] = "Three-State"
             sim["hp"]["n_mut"] = 2
-        elif "jun9" in sig_lower or "chen" in sig_lower:
+        elif "jun9" in sig_lower or "eight_state" in sig_lower:
             sim["hp"]["dataset"] = "Chen et al."
             sim["hp"]["n_mut"] = 3
 
@@ -412,7 +412,7 @@ def update_logs_for_sim(tab_id):
 def plot_landscape_heatmap(tab_id):
     sim = st.session_state.sims[tab_id]
     if sim["hp"]["dataset"] == "Chen et al.":
-        data = define_chen_landscapes()
+        data = define_eight_state_landscapes()
         drug_names = ["A", "B", "C", "D"]
 
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -533,7 +533,7 @@ def plot_live_policy(tab_id):
         ]
         if is_empirical:
             if sim["hp"]["dataset"] == "Chen et al.":
-                true_data = define_chen_landscapes()  # Shape (4 drugs, 8 genotypes)
+                true_data = define_eight_state_landscapes()  # Shape (4 drugs, 8 genotypes)
                 dataset_name = "Chen et al."
             elif sim["hp"]["dataset"] == "Four-State":
                 amp = sim["hp"].get("landscape_amplification", 1.0)
@@ -1106,10 +1106,10 @@ def plot_baseline_comparison(tab_id):
                             stochastic=sim["hp"].get("stochastic", True),
                         )
                         env_setup_ok = True
-                    elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "chen":
-                        from remarc.envs.utils import define_chen_landscapes
+                    elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "eight_state":
+                        from remarc.envs.utils import define_eight_state_landscapes
 
-                        landscapes_array = define_chen_landscapes()
+                        landscapes_array = define_eight_state_landscapes()
                         g_min_val, g_max_val = (
                             np.min(landscapes_array),
                             np.max(landscapes_array),
@@ -1322,10 +1322,10 @@ def plot_baseline_comparison(tab_id):
 
                     amp = sim["hp"].get("landscape_amplification", 1.0)
                     landscapes = define_four_state_landscapes(amplification=amp)
-                elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "chen":
-                    from remarc.envs.utils import define_chen_landscapes
+                elif DATASET_OPTIONS.get(dataset, {}).get("cli") == "eight_state":
+                    from remarc.envs.utils import define_eight_state_landscapes
 
-                    landscapes = define_chen_landscapes()
+                    landscapes = define_eight_state_landscapes()
                 else:
                     landscapes = sim.get("landscapes", [])
 
@@ -1550,8 +1550,8 @@ def get_auto_signature(hp):
     ds_cli = DATASET_OPTIONS[hp["dataset"]]["cli"]
     if ds_cli == "four_state":
         ds = "fourstate"
-    elif ds_cli == "chen":
-        ds = "chen"
+    elif ds_cli == "eight_state":
+        ds = "eight_state"
     else:
         ds = f"synthetic_N{hp['n_mut']}"
 

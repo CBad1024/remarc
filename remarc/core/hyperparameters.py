@@ -12,7 +12,7 @@ class Presets:
     test_episodes: int
     batch_size: int
     buffer_size: int
-    dataset: str = "chen"
+    dataset: str = "eight_state"
     activation: str | None = "relu"
     reward_clip: bool = False
     gen_per_step: int = 500
@@ -39,7 +39,7 @@ class Presets:
             test_episodes=10,
             batch_size=128,
             buffer_size=20000,
-            dataset="chen",
+            dataset="eight_state",
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
@@ -59,7 +59,7 @@ class Presets:
             test_episodes=2,
             batch_size=8,
             buffer_size=50,
-            dataset="chen",
+            dataset="eight_state",
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
@@ -79,7 +79,7 @@ class Presets:
             test_episodes=10,
             batch_size=128,
             buffer_size=20000,
-            dataset="chen",
+            dataset="eight_state",
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
@@ -99,7 +99,7 @@ class Presets:
             test_episodes=10,
             batch_size=128,
             buffer_size=50000,
-            dataset="chen",
+            dataset="eight_state",
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,
@@ -119,7 +119,7 @@ class Presets:
             test_episodes=2,
             batch_size=8,
             buffer_size=50,
-            dataset="chen",
+            dataset="eight_state",
             activation="relu",
             reward_clip=False,
             ent_coef=0.05,

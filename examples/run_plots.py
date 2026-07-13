@@ -21,7 +21,7 @@ from remarc.envs.wright_fisher_env import WrightFisherEnv
 from remarc.envs.utils import (
     define_four_state_landscapes,
     define_three_state_landscapes,
-    define_chen_landscapes,
+    define_eight_state_landscapes,
 )
 from remarc.core.landscapes import Landscape
 from tianshou.env import DummyVectorEnv
@@ -149,7 +149,7 @@ def main():
     elif DATASET == "four_state":
         landscape_data = define_four_state_landscapes(amplification=AMP)
     elif DATASET == "eight_state":
-        landscape_data = define_chen_landscapes()
+        landscape_data = define_eight_state_landscapes()
     else:
         raise ValueError(f"Unknown dataset: {DATASET}")
 

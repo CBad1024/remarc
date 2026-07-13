@@ -336,21 +336,21 @@ def train_wf_landscapes(
     is_three_state = False
 
     if hasattr(p, "dataset") and p.dataset == "eight_state":
-        from remarc.envs import define_chen_landscapes
+        from remarc.envs import define_eight_state_landscapes
 
         print(
             "Using Eight-State landscapes for Wright-Fisher training (raw fitness, no normalization)."
         )
         v_N = 3
-        chen_data = define_chen_landscapes()
-        num_drugs = len(chen_data)
+        eight_state_data = define_eight_state_landscapes()
+        num_drugs = len(eight_state_data)
 
-        g_min, g_max = np.min(chen_data), np.max(chen_data)
+        g_min, g_max = np.min(eight_state_data), np.max(eight_state_data)
         print(f"Chen Data: Min={g_min:.4f}, Max={g_max:.4f}, Range={g_max - g_min:.4f}")
 
         for i in range(num_drugs):
             landscape_list.append(
-                Landscape(v_N, sigma=0.0, ls=chen_data[i], g_min=g_min, g_max=g_max)
+                Landscape(v_N, sigma=0.0, ls=eight_state_data[i], g_min=g_min, g_max=g_max)
             )
 
     elif hasattr(p, "dataset") and p.dataset == "four_state":
