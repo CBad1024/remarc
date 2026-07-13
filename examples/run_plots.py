@@ -46,71 +46,79 @@ def binary_indices(N):
 
 
 def run_eval(
-    env, policy, agent_type="RL", num_runs=10, episode_steps=1000, drug_idx=0
+    env_prototype, policy, agent_type="RL", num_runs=10, episode_steps=1000, drug_idx=0
 ):  # DRUG INDEX NOT USED UNLESS SINGLE DRUG POLICY
-    all_fit = []
-    all_states = []
-    all_actions = []
+    import copy
+    envs = [copy.deepcopy(env_prototype) for _ in range(num_runs)]
+    fitnesses = [[] for _ in range(num_runs)]
+    states = [[] for _ in range(num_runs)]
+    actions = [[] for _ in range(num_runs)]
+    
+    if agent_type == "Greedy":
+        agent = GreedyAgent(env_prototype.drug_landscapes)
+    elif agent_type == "Random":
+        agent = RandomPolicy(env_prototype.num_drugs)
+    elif agent_type == "Single Drug":
+        agent = SingleDrugPolicy(drug_idx)
+    else:
+        agent = policy
 
-    for _ in range(num_runs):
-        obs, _ = env.reset()
-        fitnesses = []
-        states = []
-        actions = []
-
+    obses = [e.reset()[0] for e in envs]
+    dones = [False] * num_runs
+    
+    for step in range(episode_steps):
+        for i, e in enumerate(envs):
+            if not dones[i]:
+                fitnesses[i].append(e.get_fitness())
+                states[i].append(obses[i][-e.num_genotypes :])
+        
+        active_indices = [i for i, d in enumerate(dones) if not d]
+        if not active_indices:
+            break
+            
+        active_obses = [obses[i] for i in active_indices]
+        
         if agent_type == "Greedy":
-            agent = GreedyAgent(env.drug_landscapes)
+            acts = [agent.get_action(obs[-env_prototype.num_genotypes :]) for obs in active_obses]
         elif agent_type == "Random":
-            agent = RandomPolicy(env.num_drugs)
-        elif agent_type == "Single Drug":
-            agent = SingleDrugPolicy(drug_idx)
+            batch = Batch(obs=np.array(active_obses))
+            acts = agent(batch).act
+        elif agent_type == "Single Drug":  # Single Drug
+            acts = [agent.drug_idx] * len(active_indices)
+        elif agent_type == "Shepherd":
+            acts = [agent(obs[-env_prototype.num_genotypes :]) for obs in active_obses]
         else:
-            agent = policy
+            batch = Batch(obs=np.array(active_obses), info={})
+            with torch.no_grad():
+                res = agent(batch)
+            acts = res.act
 
-        done = False
-        step = 0
-        while not done and step < episode_steps:
-            fitnesses.append(env.get_fitness())
-            states.append(obs[-env.num_genotypes :])
+        for idx, act in zip(active_indices, acts):
+            actions[idx].append(int(act))
+            next_obs, _, terminated, truncated, _ = envs[idx].step(act)
+            obses[idx] = next_obs
+            if terminated or truncated:
+                dones[idx] = True
+                
+    for i in range(num_runs):
+        while len(fitnesses[i]) < episode_steps:
+            fitnesses[i].append(fitnesses[i][-1])
+            states[i].append(states[i][-1])
+            actions[i].append(actions[i][-1] if len(actions[i]) > 0 else -1)
 
-            if agent_type == "Greedy":
-                current_state = obs[-env.num_genotypes :]
-                action = agent.get_action(current_state)
-            elif agent_type == "Random":
-                batch = Batch(obs=np.array([obs]))
-                action = agent(batch).act[0]
-            elif isinstance(agent_type, int):  # Single Drug
-                action = agent_type
-            elif agent_type == "Shepherd":
-                action = agent(obs[-env.num_genotypes :])
-            else:
-                batch = Batch(obs=np.array([obs]), info={})
-                with torch.no_grad():
-                    res = agent(batch)
-                action = res.act[0]
-
-            actions.append(int(action))
-            obs, _, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-            step += 1
-
-        while len(fitnesses) < episode_steps:
-            fitnesses.append(fitnesses[-1])
-            states.append(states[-1])
-            actions.append(actions[-1] if len(actions) > 0 else -1)
-
-        all_fit.append(fitnesses)
-        all_states.append(states)
-        all_actions.append(actions)
-
-    return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_states, all_actions
+    return np.mean(fitnesses, axis=0), np.std(fitnesses, axis=0), states, actions
 
 
 def main():
-    # import argparse
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--arch", type=str, default="256", choices=["32", "64", "128", "256", "baseline"], help="Network architecture size")
-    # args = parser.parse_args()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--arch", type=str, default="256", choices=["32", "64", "128", "256", "baseline"], help="Network architecture size")
+    parser.add_argument("--dataset", type=str, default="four_state", choices=["three_state", "four_state", "eight_state"], help="Dataset to run on")
+    parser.add_argument("--dh", type=int, default=1, help="Delta horizon")
+    parser.add_argument("--delta", type=float, default=0.5, help="Delta multiplier")
+    parser.add_argument("--train", action="store_true", help="Set to train the model")
+    args = parser.parse_args()
+
     LR = 1e-4
     MR = 1e-5
     EPOCHS = 300
@@ -120,33 +128,28 @@ def main():
     EVAL_STEPS = 5000
     EVAL_RUNS = 100
     n_frames = 1
-    delta = 0.5
-    delta_horizon = 1
+    delta = args.delta
+    delta_horizon = args.dh
     gps = 10
     gamma = 0.99
     ent = 0.1
     batch = 64
-    DATASET = "four_state"  # Accepts "three_state", "four_state", or "eight_state"
+    DATASET = args.dataset  # Accepts "three_state", "four_state", or "eight_state"
     L = 15
-    TRAIN = False  # Set to True to train the model, False to load existing model
+    TRAIN = args.train  # Set to True to train the model, False to load existing model
 
     sig = f"{DATASET}_dh_{delta_horizon}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
 
-    # if args.arch == "baseline":
-    #     sig = f"{DATASET}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
-    # else:
-    #     sig = f"Three State_net{args.arch}_d{delta}_g{gps}_gam{gamma}_e{ent}_b{batch}"
-
-    # if args.arch == "32":
-    #     hidden, head = [32, 32], [32]
-    # elif args.arch == "64":
-    #     hidden, head = [64, 64], [64]
-    # elif args.arch == "128":
-    #     hidden, head = [128, 128], [128]
-    # elif args.arch == "256":
-    #     hidden, head = [256, 256, 256], [128]
-    # else:
-    hidden, head = [256, 256, 256], [128]  # Baseline uses 256 architecture
+    if args.arch == "32":
+        hidden, head = [32, 32], [32]
+    elif args.arch == "64":
+        hidden, head = [64, 64], [64]
+    elif args.arch == "128":
+        hidden, head = [128, 128], [128]
+    elif args.arch == "256":
+        hidden, head = [256, 256, 256], [128]
+    else:
+        hidden, head = [256, 256, 256], [128]  # Baseline uses 256 architecture
 
     if DATASET == "three_state":
         landscape_data = define_three_state_landscapes(amplification=AMP)

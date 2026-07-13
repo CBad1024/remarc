@@ -433,7 +433,7 @@ class ThreeGenotypeEnv(WrightFisherEnv):
         )
 
     @classmethod
-    def getEnv(
+    def get_env(
         cls,
         n_train,
         n_test,
