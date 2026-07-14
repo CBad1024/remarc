@@ -100,6 +100,7 @@ def plot_simplex_policy_slices(
     show_legend=True,
     is_three_state=False,
     scatter_states=None,
+    latent_mapping=None,
 ):
     """
     Visualize a drug-switching policy on the simplex.
@@ -189,7 +190,11 @@ def plot_simplex_policy_slices(
                 state = np.array([l0, l1, l2], dtype=np.float32)
             else:
                 state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
-            actions[p_idx] = policy_fn(state)
+            if latent_mapping is not None:
+                true_state = _map_latent_to_state(state, latent_mapping)
+                actions[p_idx] = policy_fn(true_state)
+            else:
+                actions[p_idx] = policy_fn(state)
 
         # ── color each triangle by its centroid action ──
         tri_actions = np.zeros(len(tri_idx), dtype=int)
@@ -209,13 +214,17 @@ def plot_simplex_policy_slices(
         ax.add_collection(pc)
 
         if scatter_states is not None:
-            if is_three_state:
+            if latent_mapping is not None:
+                sub = _map_state_to_latent(scatter_states, latent_mapping)
+            else:
                 sub = np.array(scatter_states)
+                
+            if is_three_state:
                 l0, l1, l2 = sub[:, 0], sub[:, 1], sub[:, 2]
-                S = l0 + l1 + l2
-                S[S < 1e-9] = 1.0
-                x = 0.5 * (2 * l1 + l2) / S
-                y = (_SQRT3_2 * l2) / S
+                S_scatter = l0 + l1 + l2
+                S_scatter[S_scatter < 1e-9] = 1.0
+                x = 0.5 * (2 * l1 + l2) / S_scatter
+                y = (_SQRT3_2 * l2) / S_scatter
                 ax.scatter(
                     x,
                     y,
@@ -227,15 +236,14 @@ def plot_simplex_policy_slices(
                     zorder=6,
                 )
             else:
-                sub = np.array(scatter_states)
                 mask = (sub[:, 3] >= x3_lo) & (sub[:, 3] <= x3_hi)
                 if np.any(mask):
                     sub = sub[mask]
                     l0, l1, l2 = sub[:, 0], sub[:, 1], sub[:, 2]
-                    S = l0 + l1 + l2
-                    S[S < 1e-9] = 1.0
-                    x = 0.5 * (2 * l1 + l2) / S
-                    y = (_SQRT3_2 * l2) / S
+                    S_scatter = l0 + l1 + l2
+                    S_scatter[S_scatter < 1e-9] = 1.0
+                    x = 0.5 * (2 * l1 + l2) / S_scatter
+                    y = (_SQRT3_2 * l2) / S_scatter
                     ax.scatter(
                         x,
                         y,
@@ -370,6 +378,7 @@ def plot_policy_difference_slices(
     title="Policy Difference",
     figsize=None,
     is_three_state=False,
+    latent_mapping=None,
 ):
     """
     Visualize regions of agreement vs disagreement between two policies.
@@ -419,8 +428,13 @@ def plot_policy_difference_slices(
                 state = np.array([l0, l1, l2], dtype=np.float32)
             else:
                 state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
-            actions_1[p_idx] = policy_fn_1(state)
-            actions_2[p_idx] = policy_fn_2(state)
+            if latent_mapping is not None:
+                true_state = _map_latent_to_state(state, latent_mapping)
+                actions_1[p_idx] = policy_fn_1(true_state)
+                actions_2[p_idx] = policy_fn_2(true_state)
+            else:
+                actions_1[p_idx] = policy_fn_1(state)
+                actions_2[p_idx] = policy_fn_2(state)
 
         # color each triangle by agreement
         tri_agreements = np.zeros(len(tri_idx), dtype=int)
@@ -529,6 +543,7 @@ def plot_policy_magnitude_difference_slices(
     title="Policy Magnitude Difference",
     figsize=None,
     is_three_state=False,
+    latent_mapping=None,
 ):
     """
     Visualize magnitude of disagreement between two policies.
@@ -578,9 +593,14 @@ def plot_policy_magnitude_difference_slices(
                 state = np.array([l0, l1, l2], dtype=np.float32)
             else:
                 state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
-            actions_1[p_idx] = policy_fn_1(state)
-            actions_2[p_idx] = policy_fn_2(state)
-
+            if latent_mapping is not None:
+                true_state = _map_latent_to_state(state, latent_mapping)
+                actions_1[p_idx] = policy_fn_1(true_state)
+                actions_2[p_idx] = policy_fn_2(true_state)
+                # Compute state center here if needed, but the original code evaluates fitness later using state
+                # Wait, the fitness evaluation uses state down below:
+                # `landscapes[a1] @ state` -> this would be wrong if state is 4D and landscapes is 8D.
+                # Fixed below.
         tri_diffs = np.zeros(len(tri_idx), dtype=float)
         for t_idx, (v0, v1, v2) in enumerate(tri_idx):
             a1_votes = [actions_1[v0], actions_1[v1], actions_1[v2]]
@@ -595,8 +615,14 @@ def plot_policy_magnitude_difference_slices(
                     state = np.array([cb[0], cb[1], cb[2]])
                 else:
                     state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
-                fitness_1 = np.dot(landscapes[tri_a1], state)
-                fitness_2 = np.dot(landscapes[tri_a2], state)
+                    
+                if latent_mapping is not None:
+                    true_state = _map_latent_to_state(state, latent_mapping)
+                    fitness_1 = np.dot(landscapes[tri_a1], true_state)
+                    fitness_2 = np.dot(landscapes[tri_a2], true_state)
+                else:
+                    fitness_1 = np.dot(landscapes[tri_a1], state)
+                    fitness_2 = np.dot(landscapes[tri_a2], state)
                 # Normalize difference by the landscape range
                 tri_diffs[t_idx] = abs(fitness_1 - fitness_2) / denom
             else:
@@ -705,6 +731,7 @@ def plot_policy_fitness_landscape_slices(
     title="Normalized Fitness Landscape (RL Policy)",
     figsize=None,
     is_three_state=False,
+    latent_mapping=None,
 ):
     """
     Visualize normalized fitness of the population under the drug selected by the policy.
@@ -756,7 +783,11 @@ def plot_policy_fitness_landscape_slices(
                 state = np.array([l0, l1, l2], dtype=np.float32)
             else:
                 state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
-            actions[p_idx] = policy_fn(state)
+            if latent_mapping is not None:
+                true_state = _map_latent_to_state(state, latent_mapping)
+                actions[p_idx] = policy_fn(true_state)
+            else:
+                actions[p_idx] = policy_fn(state)
 
         tri_fitness = np.zeros(len(tri_idx), dtype=float)
         for t_idx, (v0, v1, v2) in enumerate(tri_idx):
@@ -769,8 +800,12 @@ def plot_policy_fitness_landscape_slices(
                 state = np.array([cb[0], cb[1], cb[2]])
             else:
                 state = np.array([cb[0] * S, cb[1] * S, cb[2] * S, x3_mid])
-            fitness = np.dot(landscapes[tri_a], state)
-
+            if latent_mapping is not None:
+                true_state = _map_latent_to_state(state, latent_mapping)
+                fitness = np.dot(landscapes[tri_a], true_state)
+            else:
+                fitness = np.dot(landscapes[tri_a], state)
+            
             # Normalize fitness to [0, 1]
             tri_fitness[t_idx] = (fitness - g_min) / denom
 
@@ -1051,6 +1086,7 @@ def plot_population_density_slices(
     x3_slices=None,
     figsize=None,
     is_three_state=False,
+    latent_mapping=None,
 ):
     """
     Plot the population density from trajectories as a heatmap on the 2-simplex slices.
@@ -1081,7 +1117,10 @@ def plot_population_density_slices(
     all_states = []
     for episode in state_trajectories:
         all_states.extend(episode)
-    all_states = np.array(all_states)  # Shape: (N, 4)
+    all_states = np.array(all_states)  # Shape: (N, num_states)
+    
+    if latent_mapping is not None:
+        all_states = _map_state_to_latent(all_states, latent_mapping)
 
     # Build a Triangulation and TriFinder to map Cartesian points to triangles
     triangulation = Triangulation(x_cart, y_cart, tri_idx)
@@ -1175,10 +1214,16 @@ def plot_population_density_slices(
                     state = np.array([l0, l1, l2], dtype=np.float32)
                 else:
                     state = np.array([l0 * S, l1 * S, l2 * S, x3_mid], dtype=np.float32)
+                    
+                if latent_mapping is not None:
+                    eval_state = _map_latent_to_state(state, latent_mapping)
+                else:
+                    eval_state = state
+                    
                 if policy_fn is not None:
-                    actions[p_idx] = policy_fn(state)
+                    actions[p_idx] = policy_fn(eval_state)
                 if greedy_policy_fn is not None:
-                    greedy_actions[p_idx] = greedy_policy_fn(state)
+                    greedy_actions[p_idx] = greedy_policy_fn(eval_state)
 
             levels = np.arange(0.5, num_drugs, 1.0)
 
@@ -1501,7 +1546,49 @@ def pca_transform(X_clr, pca):
     X_clr = np.asarray(X_clr, dtype=float)
     return (X_clr - pca["mean"]) @ pca["components"].T
 
+def _map_latent_to_state(W, latent_mapping):
+    """
+    W: array of shape (..., 4) probabilities in latent 3-simplex.
+    Returns: state array of shape (..., 8) in true state space.
+    """
+    pca = latent_mapping["pca"]
+    Z_mean = latent_mapping["Z_mean"]
+    Z_std = latent_mapping["Z_std"]
+    temp = latent_mapping.get("temperature", 1.0)
+    
+    W_clip = np.clip(W, 1e-12, 1.0)
+    Z_unnorm = np.log(W_clip) * temp
+    Z_orig = Z_unnorm * Z_std + Z_mean
+    
+    original_shape = Z_orig.shape
+    Z_2d = Z_orig.reshape(-1, 4)
+    X_clr = pca_inverse_transform(Z_2d, pca)
+    state_2d = clr_inverse(X_clr)
+    return state_2d.reshape(original_shape[:-1] + (state_2d.shape[-1],))
 
+def _map_state_to_latent(state, latent_mapping):
+    """
+    state: array of shape (..., 8) probabilities in state space.
+    Returns: W array of shape (..., 4) in latent 3-simplex.
+    """
+    pca = latent_mapping["pca"]
+    Z_mean = latent_mapping["Z_mean"]
+    Z_std = latent_mapping["Z_std"]
+    temp = latent_mapping.get("temperature", 1.0)
+    
+    original_shape = state.shape
+    state_2d = state.reshape(-1, state.shape[-1])
+    
+    X_clr = clr_transform(state_2d)
+    Z_orig = pca_transform(X_clr, pca)
+    
+    Z = (Z_orig - Z_mean) / (Z_std + 1e-12)
+    Z = Z / max(temp, 1e-12)
+    
+    Z = Z - Z.max(axis=1, keepdims=True)
+    W = np.exp(Z)
+    W /= W.sum(axis=1, keepdims=True)
+    return W.reshape(original_shape[:-1] + (4,))
 
 def _mix_with_white(color, t):
     """
@@ -1938,6 +2025,7 @@ def plot_pop_x_metric_slices(
     is_three_state=False,
     cmap_name="magma",
     mincnt=0,
+    latent_mapping=None,
 ):
     if x3_slices is None and not is_three_state:
         x3_slices = [
@@ -1961,10 +2049,15 @@ def plot_pop_x_metric_slices(
 
     bary, x_cart, y_cart, tri_idx = _make_simplex_grid(resolution)
 
-    all_states = []
+    all_states_orig = []
     for episode in state_trajectories:
-        all_states.extend(episode)
-    all_states = np.array(all_states)
+        all_states_orig.extend(episode)
+    all_states_orig = np.array(all_states_orig)
+
+    if latent_mapping is not None:
+        all_states = _map_state_to_latent(all_states_orig, latent_mapping)
+    else:
+        all_states = all_states_orig
 
     triangulation = Triangulation(x_cart, y_cart, tri_idx)
     trifinder = triangulation.get_trifinder()
@@ -1973,12 +2066,14 @@ def plot_pop_x_metric_slices(
     for s_idx, (x3_lo, x3_hi) in enumerate(x3_slices):
         if is_three_state:
             states_in_slice = all_states
+            states_in_slice_orig = all_states_orig
         else:
             if s_idx == 0:
                 mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] <= x3_hi)
             else:
                 mask = (all_states[:, 3] >= x3_lo) & (all_states[:, 3] < x3_hi)
             states_in_slice = all_states[mask]
+            states_in_slice_orig = all_states_orig[mask]
 
         vals = np.zeros(len(tri_idx), dtype=float)
 
@@ -2010,10 +2105,10 @@ def plot_pop_x_metric_slices(
 
                 valid_mask = found_tri_indices != -1
                 valid_idx = found_tri_indices[valid_mask]
-                valid_states = states_in_slice[valid_mask]
+                valid_states_orig = states_in_slice_orig[valid_mask]
 
                 for i, tidx in enumerate(valid_idx):
-                    vals[tidx] += metric_fn(valid_states[i])
+                    vals[tidx] += metric_fn(valid_states_orig[i])
 
         slice_vals.append(vals)
 
