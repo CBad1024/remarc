@@ -3,7 +3,15 @@ from gymnasium import spaces
 import numpy as np
 import itertools
 import functools
-from tianshou.env import SubprocVectorEnv
+# DummyVectorEnv (not SubprocVectorEnv): benchmarked at near-identical wall-clock
+# cost for this env (~30s difference over a full 300-epoch run), since each
+# step() is cheap pure-numpy math. SubprocVectorEnv was previously used here for
+# parallel training, but on macOS its subprocesses spawn (not fork), which
+# re-imports torch/matplotlib/etc. per worker (~390MB each) since this env's
+# factory fns are launched from a script with those heavy top-level imports.
+# With n_train_envs=16 x several parallel experiments, that multiplied into
+# 100+GB of redundant import overhead and caused OOM. See run_experiments.sh.
+from tianshou.env import DummyVectorEnv
 from ..core.landscapes import Landscape
 import collections
 
@@ -389,8 +397,8 @@ class WrightFisherEnv(gym.Env):
             n_frames,
             delta_horizon,
         )
-        train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
-        test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
+        train_envs = DummyVectorEnv([fn_train for _ in range(n_train)])
+        test_envs = DummyVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
 
 
@@ -480,8 +488,9 @@ class ThreeGenotypeEnv(WrightFisherEnv):
             n_frames,
             delta_horizon,
         )
-        train_envs = SubprocVectorEnv([fn_train for _ in range(n_train)])
-        test_envs = SubprocVectorEnv([fn_test for _ in range(n_test)])
+        # DummyVectorEnv here too — see comment on the import above.
+        train_envs = DummyVectorEnv([fn_train for _ in range(n_train)])
+        test_envs = DummyVectorEnv([fn_test for _ in range(n_test)])
         return train_envs, test_envs
 
 
