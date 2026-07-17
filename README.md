@@ -22,3 +22,5 @@ uv run examples/train.py --wf-train
 ```bash
 uv run streamlit run examples/dashboard.py
 ```
+
+For more usage details, look at USAGE.md.
