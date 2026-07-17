@@ -62,7 +62,6 @@ def run_eval(
         states = []
         actions = []
 
-
         if agent_type == "Greedy":
             agent = GreedyAgent(env.drug_landscapes)
         elif agent_type == "Random":
@@ -84,8 +83,8 @@ def run_eval(
             elif agent_type == "Random":
                 batch = Batch(obs=np.array([obs]))
                 action = agent(batch).act[0]
-            elif isinstance(agent_type, int):  # Single Drug
-                action = agent_type
+            elif isinstance(agent_type, int) or agent_type == "Single Drug":  # Single Drug
+                action = drug_idx if agent_type == "Single Drug" else agent_type
             elif agent_type == "Shepherd":
                 action = agent(obs[-env.num_genotypes :])
             else:
@@ -108,7 +107,7 @@ def run_eval(
         all_states.append(states)
         all_actions.append(actions)
 
-    return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_states, all_actions
+    return np.mean(all_fit, axis=0), np.std(all_fit, axis=0), all_fit, all_states, all_actions
 
 
 def main():
@@ -119,7 +118,8 @@ def main():
     parser.add_argument("--dh", type=int, default=1, help="Delta horizon")
     parser.add_argument("--delta", type=float, default=0.5, help="Delta multiplier")
     parser.add_argument("--train", action="store_true", help="Set to train the model")
-    parser.add_argument("--L", type=int, default=3, help="SHEPHERD horizon length")
+    parser.add_argument("--L", type=int, default=3, help="SHEPHERD MDP horizon length")
+    parser.add_argument("--cwt", action="store_true", help="Run CWT drug cycling frequency analysis")
     args = parser.parse_args()
 
     LR = 1e-4
@@ -257,23 +257,22 @@ def main():
         return shepherd_mdp.get_action(state)
 
     print("Evaluating models...")
-    rl_m, rl_std, rl_states, rl_actions = run_eval(eval_env, policy, "RL", EVAL_RUNS, EVAL_STEPS)
-    print("RL Eval Done. Starting Greedy Eval...")
-    gr_m, gr_std, gr_states, gr_actions = run_eval(eval_env, None, "Greedy", EVAL_RUNS, EVAL_STEPS)
-    # rn_m, rn_std, rn_states, rn_actions = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
-    sh_m, sh_std, sh_states, sh_actions = run_eval(
+    rl_m, rl_std, rl_fit, rl_states, rl_actions = run_eval(eval_env, policy, "RL", EVAL_RUNS, EVAL_STEPS)
+    gr_m, gr_std, gr_fit, gr_states, gr_actions = run_eval(eval_env, None, "Greedy", EVAL_RUNS, EVAL_STEPS)
+    rn_m, rn_std, rn_fit, rn_states, rn_actions = run_eval(eval_env, None, "Random", EVAL_RUNS, EVAL_STEPS)
+    sh_m, sh_std, sh_fit, sh_states, sh_actions = run_eval(
         eval_env, shepherd_fn, "Shepherd", EVAL_RUNS, EVAL_STEPS
     )
-    sd1_m, sd1_std, sd1_states, sd1_actions = run_eval(
+    sd1_m, sd1_std, sd1_fit, sd1_states, sd1_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=0
     )
-    sd2_m, sd2_std, sd2_states, sd2_actions = run_eval(
+    sd2_m, sd2_std, sd2_fit, sd2_states, sd2_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=1
     )
-    sd3_m, sd3_std, sd3_states, sd3_actions = run_eval(
+    sd3_m, sd3_std, sd3_fit, sd3_states, sd3_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=2
     )
-    sd4_m, sd4_std, sd4_states, sd4_actions = run_eval(
+    sd4_m, sd4_std, sd4_fit, sd4_states, sd4_actions = run_eval(
         eval_env, None, "Single Drug", EVAL_RUNS, EVAL_STEPS, drug_idx=3
     )
 
@@ -305,14 +304,14 @@ def main():
             return arr[:max_steps] / (g_max - g_min)
 
         # Random
-        # plt.plot(steps, norm(rn_m), color="gray", ls=":", lw=2, label="Random Mean")
-        # plt.fill_between(
-        #     steps,
-        #     norm(rn_m) - norm_std(rn_std),
-        #     norm(rn_m) + norm_std(rn_std),
-        #     color="gray",
-        #     alpha=0.1,
-        # )
+        plt.plot(steps, norm(rn_m), color="gray", ls=":", lw=2, label="Random Mean")
+        plt.fill_between(
+            steps,
+            norm(rn_m) - norm_std(rn_std),
+            norm(rn_m) + norm_std(rn_std),
+            color="gray",
+            alpha=0.1,
+        )
 
         # Greedy
         plt.plot(
@@ -457,8 +456,6 @@ def main():
             fig_rl_sim_p.savefig(str(pca_dir / "dominant_modes_remarc_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_rl_sim_c); plt.close(fig_rl_sim_p)
     print("REMARC PCA Info:", pca_info)
-    with open(pca_dir / "pca_components.txt", "a") as f:
-        f.write(f"REMARC PCA Info:\n{pca_info}\n\n")
 
     ret_gr = plot_dominant_modes(
         state_trajectories=gr_states,
@@ -485,8 +482,6 @@ def main():
             fig_gr_sim_p.savefig(str(pca_dir / "dominant_modes_greedy_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_gr_sim_c); plt.close(fig_gr_sim_p)
     print("Greedy PCA Info:", pca_info)
-    with open(pca_dir / "pca_components.txt", "a") as f:
-        f.write(f"Greedy PCA Info:\n{pca_info}\n\n")
 
     ret_sh = plot_dominant_modes(
         state_trajectories=sh_states,
@@ -512,10 +507,6 @@ def main():
             fig_sh_sim_c.savefig(str(pca_dir / "dominant_modes_shepherd_simplex_clean.png"), dpi=200, bbox_inches="tight")
             fig_sh_sim_p.savefig(str(pca_dir / "dominant_modes_shepherd_simplex_paths.png"), dpi=200, bbox_inches="tight")
             plt.close(fig_sh_sim_c); plt.close(fig_sh_sim_p)
-    print("SHEPHERD PCA Info:", pca_info)
-    with open(pca_dir / "pca_components.txt", "a") as f:
-        f.write(f"SHEPHERD PCA Info:\n{pca_info}\n\n")
-
     latent_mapping = None
     if DATASET == "eight_state":
         print("Computing latent mapping for 8-state system...")
@@ -802,39 +793,41 @@ def main():
     # 10. Frequency trajectories
     print("Plotting Frequency Trajectories...")
 
-    def plot_freq_traj(states_list, actions_list, title_prefix, filename_suffix):
+    def plot_freq_traj(states_list, actions_list, title_prefix, filename_suffix, run_idx=0):
         import matplotlib.patches as mpatches
         states_arr = np.array(states_list)  # (runs, steps, genotypes)
-        mean_freqs = np.mean(states_arr, axis=0)  # (steps, genotypes)
-        steps = np.arange(mean_freqs.shape[0])
         
-        # Calculate Steady State
+        # Use a single representative run for both frequencies and actions
+        run_freqs = states_arr[run_idx]  # (steps, genotypes)
+        run_actions = actions_list[run_idx]
+        steps = np.arange(run_freqs.shape[0])
+        
+        # Calculate Steady State on the single run
         steady_state_step = None
         for t in range(len(steps) - 50):
-            if np.max(np.std(mean_freqs[t:t+50], axis=0)) < 1e-3:
+            if np.max(np.std(run_freqs[t:t+50], axis=0)) < 1e-3:
                 steady_state_step = t
                 break
                 
         plt.figure(figsize=(12, 6))
         
-        # Plot Drug Highlights using first run as representative
-        first_run_actions = actions_list[0]
+        # Plot Drug Highlights based on the selected run
         drug_colors = ['#ff9999', '#99ccff', '#99ff99', '#ffcc99', '#cc99ff', '#ffff99', '#ff99cc', '#99ffff']
         
-        current_action = first_run_actions[0]
+        current_action = run_actions[0]
         start_step = 0
-        for t in range(1, len(first_run_actions)):
-            if first_run_actions[t] != current_action:
+        for t in range(1, len(run_actions)):
+            if run_actions[t] != current_action:
                 c = drug_colors[current_action % len(drug_colors)]
                 plt.axvspan(start_step, t, color=c, alpha=0.3, lw=0)
-                current_action = first_run_actions[t]
+                current_action = run_actions[t]
                 start_step = t
         c = drug_colors[current_action % len(drug_colors)]
-        plt.axvspan(start_step, len(first_run_actions) - 1, color=c, alpha=0.3, lw=0)
+        plt.axvspan(start_step, len(run_actions) - 1, color=c, alpha=0.3, lw=0)
 
-        # Plot Frequency lines
-        for i in range(mean_freqs.shape[1]):
-            plt.plot(steps, mean_freqs[:, i], label=genotype_labels[i], lw=2)
+        # Plot Frequency lines for the single run
+        for i in range(run_freqs.shape[1]):
+            plt.plot(steps, run_freqs[:, i], label=genotype_labels[i], lw=2)
 
         # Plot Steady state line
         if steady_state_step is not None:
@@ -843,15 +836,15 @@ def main():
         plt.ylim(0, 1)
         plt.grid(True, ls="--", alpha=0.4)
         plt.title(
-            f"{title_prefix} Genotype Frequencies over Time (Averaged over runs)",
+            f"{title_prefix} Genotype Frequencies over Time (Representative Run 0)",
             fontsize=14,
             fontweight="bold",
         )
         plt.xlabel("RL Steps", fontsize=12)
-        plt.ylabel("Average Frequency", fontsize=12)
+        plt.ylabel("Frequency", fontsize=12)
         
         # Custom legend for drugs
-        unique_actions = np.unique(first_run_actions)
+        unique_actions = np.unique(run_actions)
         drug_patches = [mpatches.Patch(color=drug_colors[a % len(drug_colors)], alpha=0.3, label=f'Drug {a}') for a in unique_actions]
         handles, labels = plt.gca().get_legend_handles_labels()
         handles.extend(drug_patches)
@@ -897,6 +890,34 @@ def main():
     print("Single Drug 1:", norm(np.mean(sd2_m)))
     print("Single Drug 2:", norm(np.mean(sd3_m)))
     print("Single Drug 3:", norm(np.mean(sd4_m)))
+    if args.cwt:
+        print("Running CWT Drug Cycling Frequency Analysis...")
+        from examples.cwt_analysis import execute_cwt_pipeline
+        
+        fitness_dict = {
+            "RL": rl_fit,
+            "Greedy": gr_fit,
+            "Random": rn_fit,
+            "SHEPHERD": sh_fit,
+            "Single Drug 0": sd1_fit,
+            "Single Drug 1": sd2_fit,
+            "Single Drug 2": sd3_fit,
+            "Single Drug 3": sd4_fit
+        }
+        actions_dict = {
+            "RL": rl_actions,
+            "Greedy": gr_actions,
+            "Random": rn_actions,
+            "SHEPHERD": sh_actions,
+            "Single Drug 0": sd1_actions,
+            "Single Drug 1": sd2_actions,
+            "Single Drug 2": sd3_actions,
+            "Single Drug 3": sd4_actions
+        }
+        
+        cwt_dir = project_root / "log" / "cwt_analysis" / sig
+        execute_cwt_pipeline(fitness_dict, actions_dict, cwt_dir)
+
     print("Done!")
 
 

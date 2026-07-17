@@ -564,6 +564,14 @@ def train_wf_landscapes(
     test_result = test_collector.collect(n_episode=p.test_episodes)
     print(f"Final testing result: {test_result}")
 
+    # Explicitly close the vector envs now that training/eval is done. train_envs/
+    # test_envs are DummyVectorEnv now (see wright_fisher_env.py), so this isn't
+    # freeing OS subprocesses anymore, but tianshou's vector envs have no __del__,
+    # so leaving this out would leak file handles / grow unbounded if this ever
+    # goes back to a subprocess-based vector env.
+    train_envs.close()
+    test_envs.close()
+
     # Log hyperparameters and final performance
     hparams = {}
     for k, v in dataclasses.asdict(p).items():
